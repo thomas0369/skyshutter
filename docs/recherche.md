@@ -31,6 +31,8 @@ WiFi-Livebild ist damit kein Zusatz zum HDMI-Weg, sondern dessen Alternative.
 
 ## Arbeitsplan
 
+Ausführlich mit Phasen, Gates und Rollenverteilung: [plan.md](plan.md). Kurzfassung:
+
 1. **BLE-Seite:** Android-Handy, Bluetooth-HCI-Snoop-Log aktivieren, SnapBridge-Pairing +
    Remote-Start mitschneiden → Handshake, der die WiFi-Credentials aushandelt
    (nsg-Code als Referenz).

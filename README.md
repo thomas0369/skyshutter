@@ -7,8 +7,8 @@ jeder Nikon funktionieren, die PTP/IP spricht.
 > **Status: unbestätigt.** Ob die P1100 im SnapBridge-Remote-Modus überhaupt PTP/IP
 > auf TCP 15740 anbietet, ist nirgends dokumentiert und hier noch nicht gemessen.
 > Der Code ist gegen den mitgelieferten Simulator getestet, **nicht gegen echte
-> Hardware.** Genau dafür gibt es `skyshutter probe`. Hintergrund:
-> [docs/recherche.md](docs/recherche.md).
+> Hardware.** Genau dafür gibt es `skyshutter probe`. Wie es weitergeht:
+> [docs/plan.md](docs/plan.md), Hintergrund: [docs/recherche.md](docs/recherche.md).
 
 ## Installation
 
@@ -93,6 +93,7 @@ src/skyshutter/
   simulator.py   gefakte Kamera für Entwicklung ohne Hardware
   cli.py         Kommandozeile
 docs/
+  plan.md                 Phasenplan und Rollenverteilung — hier anfangen
   recherche.md            Stand der Technik, wer was schon gemacht hat
   protokoll.md            PTP/IP-Referenz + offene Fragen zur P1100
   reverse-engineering.md  Playbook: BLE-Snoop, Mitschnitt, Auswertung
