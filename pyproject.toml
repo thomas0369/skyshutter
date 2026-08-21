@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "skyshutter"
+version = "0.1.0"
+description = "Control a Nikon camera (Coolpix P1100 and friends) over its own WiFi via PTP/IP"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+sim = ["pillow>=10"]
+
+[project.scripts]
+skyshutter = "skyshutter.cli:main"
+skyshutter-sim = "skyshutter.simulator:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/skyshutter"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "N", "C4", "RUF"]
