@@ -94,6 +94,8 @@ src/skyshutter/
   cli.py         Kommandozeile
 docs/
   plan.md                 Phasenplan und Rollenverteilung — hier anfangen
+  playbook.md             Arbeitsweise: Kern-Loop, Sicherheitsregeln, Backlog
+  FINDINGS.md             Messprotokoll — was an echter Hardware belegt ist
   recherche.md            Stand der Technik, wer was schon gemacht hat
   protokoll.md            PTP/IP-Referenz + offene Fragen zur P1100
   reverse-engineering.md  Playbook: BLE-Snoop, Mitschnitt, Auswertung

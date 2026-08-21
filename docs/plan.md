@@ -4,6 +4,9 @@ Dieser Plan beschreibt, wie aus den existierenden Projekten plus eigenem Reverse
 Engineering eine vollständige API für die Coolpix P1100 wird — und vor allem:
 **wer davon was macht.**
 
+Die Arbeitsweise dahinter steht in [playbook.md](playbook.md), der belegte Stand in
+[FINDINGS.md](FINDINGS.md).
+
 ## 1. Rollenverteilung
 
 Ich arbeite in einem Cloud-Container. Kein WLAN zur Kamera, kein Bluetooth, keine
