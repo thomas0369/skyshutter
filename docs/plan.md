@@ -42,6 +42,11 @@ die Frage nach dem Interface die richtige erste Frage.
 
 **Empfehlung: B für die tägliche Arbeit, C für die Mitschnitte.**
 
+> Für die tatsächlich vorhandene Hardware (Windows-Laptop mit WSL, USB-Ethernet,
+> GL.iNet Mango) gilt die konkrete Anleitung in
+> [setup-wsl-glinet.md](setup-wsl-glinet.md) — dort ist der Aufbau umgedreht,
+> weil der Mango kein WPA3 kann.
+
 Mit **B** arbeitest du normal weiter (Chat mit mir über das Heimnetz) und schickst
 skyshutter gezielt über den zweiten Adapter zur Kamera. Das ist der bequemste
 Dauerzustand.

@@ -94,6 +94,7 @@ src/skyshutter/
   cli.py         Kommandozeile
 docs/
   plan.md                 Phasenplan und Rollenverteilung — hier anfangen
+  setup-wsl-glinet.md     Aufbau für Windows/WSL + GL.iNet Mini-Router
   playbook.md             Arbeitsweise: Kern-Loop, Sicherheitsregeln, Backlog
   FINDINGS.md             Messprotokoll — was an echter Hardware belegt ist
   recherche.md            Stand der Technik, wer was schon gemacht hat
