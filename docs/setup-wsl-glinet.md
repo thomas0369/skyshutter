@@ -11,22 +11,25 @@ allgemeine Variantentabelle in [plan.md](plan.md), Abschnitt 2.
 
 ## Die entscheidende Überlegung: wer redet mit der Kamera?
 
-Naheliegend wäre, den Mango ins Kamera-WLAN zu hängen. Das ist hier aber der
-schlechtere Weg: **Der Mango kann kein WPA3-SAE** — GL.iNet hat es auf dieser
-Hardware mit Firmware 3.215 deaktiviert, für 4.x ist es unbestätigt. Nikon gibt
-für die P1100 WPA3-SAE an. Der Router würde also möglicherweise gar nicht erst ins
-Kamera-Netz kommen, und du säßest an einem Problem, das nichts mit dem eigentlichen
-Projekt zu tun hat.
+> **Gemessen am 22.08.2026 — die ursprüngliche Sorge war unbegründet.** Der
+> Kamera-AP läuft mit **WPA2-PSK auf Kanal 6**, nicht mit WPA3-SAE, und die
+> Kamera nimmt sich selbst die Adresse **192.168.0.10**. Nikons WPA3-Angabe
+> betrifft diesen Modus nicht. Damit kann auch der Mango ins Kamera-Netz, und
+> Variante 2 ist ohne Vorbehalt benutzbar.
 
-Deshalb wird es umgedreht: **Das Laptop-WLAN geht zur Kamera** (moderner Adapter,
-Windows-Treiber, WPA3 kein Thema), **der Mango liefert das Internet** aus dem
-Heim-WLAN. Das Risiko landet damit auf der Seite, die du kontrollierst — dein
-Heimnetz kann WPA2, die Kamera muss nichts können.
+Naheliegend wäre, den Mango ins Kamera-WLAN zu hängen. Der Grund, es zunächst
+anders herum zu planen, war die Annahme, die Kamera verlange WPA3-SAE — was der
+Mango nicht kann (GL.iNet hat es auf dieser Hardware mit Firmware 3.215
+deaktiviert, für 4.x unbestätigt). Diese Annahme ist widerlegt.
+
+Der umgekehrte Aufbau bleibt trotzdem der bequemere: **Das Laptop-WLAN geht zur
+Kamera**, **der Mango liefert das Internet** aus dem Heim-WLAN. Sobald
+mitgeschnitten werden soll, lohnt der Wechsel zu Variante 2.
 
 ## Variante 1 — der Alltagsaufbau (empfohlen)
 
 ```
-Kamera (AP, 192.168.1.1)  ←── WLAN ──  Laptop  ── USB-Ethernet ──→ Mango ──→ Heim-WLAN → Internet
+Kamera (AP, 192.168.0.10)  ←── WLAN ──  Laptop  ── USB-Ethernet ──→ Mango ──→ Heim-WLAN → Internet
 ```
 
 **1. Mango als Repeater ins Heim-WLAN.** Weboberfläche unter `http://192.168.8.1`,
@@ -53,7 +56,7 @@ Fernsteuerungsmodus ist.
 **Prüfen — beides muss gleichzeitig gehen:**
 
 ```powershell
-ping 192.168.1.1          # Kamera
+ping 192.168.0.10          # Kamera
 curl.exe https://ifconfig.me   # Internet
 ```
 
@@ -62,15 +65,15 @@ Klappt nur eins von beiden, stimmen die Metriken nicht.
 ## Variante 2 — für Mitschnitte, später
 
 Erst relevant, wenn ein Paketmitschnitt gebraucht wird (Phase 1b). Dann hängt der
-Mango im Kamera-WLAN und schneidet mit — **falls die Kamera WPA2 anbietet.** Viele
-Geräte laufen im WPA2/WPA3-Übergangsmodus; ob die P1100 dazugehört, sehen wir am
-Repeater-Dialog des Mango.
+Mango im Kamera-WLAN und schneidet mit. Die WPA2-Frage ist geklärt — die Kamera
+bietet WPA2-PSK an, der Mango kommt hinein.
 
 Zwei Details, die dir Ärger sparen:
 
-**Keine statische Route, sondern Portweiterleitung.** Kamera und Heimnetz benutzen
-gern beide `192.168.1.0/24` — eine statische Route wäre dann mehrdeutig. Stattdessen
-im Mango `15740 → 192.168.1.1:15740` weiterleiten und skyshutter auf den Router
+**Keine statische Route, sondern Portweiterleitung.** Hier kollidieren die Netze
+zwar nicht (Kamera `192.168.0.0/24`, Heimnetz `192.168.1.0/24`), aber die
+Weiterleitung ist trotzdem der robustere Weg. Im Mango
+`15740 → 192.168.0.10:15740` weiterleiten und skyshutter auf den Router
 zeigen lassen:
 
 ```bash
@@ -84,7 +87,7 @@ Mitschnitt wird direkt über SSH auf den Laptop gestreamt:
 
 ```bash
 ssh root@192.168.8.1 "opkg update && opkg install tcpdump"
-ssh root@192.168.8.1 "tcpdump -i any -s 0 -U -w - host 192.168.1.1" > coolpix.pcap
+ssh root@192.168.8.1 "tcpdump -i any -s 0 -U -w - host 192.168.0.10" > coolpix.pcap
 ```
 
 **Was der Mango nicht sieht:** Wenn das Handy direkt im Kamera-WLAN hängt, läuft
@@ -176,6 +179,51 @@ den Entwickleroptionen *Bluetooth-HCI-Snoop-Log* aktiviert und das Handy neu
 gestartet werden; erst dann entsteht ein echtes btsnoop, das
 `skyshutter.btsnoop` lesen kann.
 
+## Die Kamera direkt über Bluetooth ansprechen (gemessen 22.08.2026)
+
+Der schnellere Weg als der Umweg über das Handy: der Laptop redet selbst mit
+der Kamera. Kein Pairing nötig — die Verbindung kam ohne zustande, obwohl die
+Kamera mit dem Handy gekoppelt ist.
+
+**WSL hat kein Bluetooth.** Kein Adapter, kein BlueZ. Das Werkzeug läuft
+deshalb unter dem Windows-Python:
+
+```bash
+PY='/mnt/c/Users/thoma/AppData/Local/Programs/Python/Python312/python.exe'
+$PY -m pip install --user bleak
+cp tools/ble-probe.py /mnt/c/Users/thoma/AppData/Local/Temp/
+$PY 'C:\Users\thoma\AppData\Local\Temp\ble-probe.py' scan
+```
+
+**Falle 5: der Bluetooth-Funk ist aus, und bleak sagt es unmissverständlich**
+(`BleakBluetoothNotAvailableError: Bluetooth radio is not powered on`).
+Einschalten ohne Klick in den Einstellungen geht über die Radio-API:
+
+```powershell
+Add-Type -AssemblyName System.Runtime.WindowsRuntime
+# Radio.RequestAccessAsync(), dann SetStateAsync('On') auf dem Kind 'Bluetooth'
+```
+
+Das vollständige Skript steht in der Messung vom 22.08.2026 in
+[FINDINGS.md](FINDINGS.md). PowerShell **5.1** benutzen, nicht 7 — nur dort
+sind die WinRT-Typen direkt erreichbar.
+
+**Falle 6: die Kamera advertised in Schüben.** Ein einzelner Scan, der in eine
+stille Phase fällt, beweist nichts. `ble-probe.py` scannt deshalb bis zu
+viermal. Nach einer getrennten Verbindung wird sie länger still — vermutlich
+Energiesparen; dann hilft nur, sie am Gerät aufzuwecken.
+
+**Falle 7: die BLE-Adresse rotiert.** Sie ist eine Resolvable Private Address
+und sieht bei jedem Scan anders aus. Nie auf die Adresse verbinden, immer auf
+den Namen.
+
+Weil jede Verbindung einen Scan kostet und die Kamera nicht immer wach ist,
+holt `session` alles in einem Zug — Baum, Werte und Live-Verkehr:
+
+```bash
+$PY 'C:\…\ble-probe.py' session --seconds 60
+```
+
 ### Mitschnitte im Repo
 
 Rohmitschnitte enthalten Seriennummern, Geräteadressen und potenziell SSID und
@@ -227,7 +275,7 @@ Kamera in den Fernsteuerungsmodus, Laptop-WLAN mit dem Kamera-AP verbinden, dann
 
 ```bash
 skyshutter probe
-skyshutter --host 192.168.1.1 probe --ports 15740 80 8080 443 49152 5000
+skyshutter --host 192.168.0.10 probe --ports 15740 80 8080 443 49152 5000
 ```
 
 Beide Ausgaben vollständig zurückmelden — daran hängt die Entscheidung über die

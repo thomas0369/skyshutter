@@ -16,8 +16,9 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 — Ist es PTP/IP? |
 | **Offenes Gate** | Antwortet die P1100 im Fernsteuerungsmodus auf TCP 15740? |
-| **Fehlende Messung** | Ausgabe von `skyshutter probe` im Kamera-WLAN |
-| **Blockiert durch** | Hardware-Zugang (nur Thomas) |
+| **Fehlende Messung** | `skyshutter probe` — davor muss der Kamera-AP überhaupt laufen |
+| **Blockiert durch** | Die Kamera startet ihr WLAN nicht über das Menü. Der AP muss per BLE-Kommando gestartet werden; welches Byte das ist, ist unbekannt. |
+| **Nächster Schritt** | `tools/ble-probe.py session` mitlaufen lassen, während die App das WLAN startet — das Kommando muss dabei sichtbar werden |
 | **Stand vom** | 2026-08-22 |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
@@ -36,10 +37,13 @@ Spiegelt die Liste in [protokoll.md](protokoll.md); abgehakt wird nur mit Messun
 - [ ] Live View vorhanden — Header-Länge, Auflösung, Bildrate?
 - [ ] Vendor-Properties für den 125×-Zoom?
 - [ ] Verträgt die Kamera parallele Sessions neben SnapBridge?
-- [ ] Welche IP hat die Kamera als AP tatsächlich? (Kandidaten: `192.168.1.1`,
-      `192.168.0.10` — beide aus fremden Coolpix-Setups belegt)
-- [ ] WPA3-SAE bestätigt? (Herstellerangabe, ungeprüft — entscheidet, ob
-      Monitor-Mode als Messmethode überhaupt taugt)
+- [x] Welche IP hat die Kamera als AP tatsächlich? **`192.168.0.10`**
+      (22.08.2026 vom Kameradisplay abgelesen, Kanal 6). `192.168.1.1` ist für
+      dieses Modell hinfällig — und zugleich das Gateway des Heimnetzes hier,
+      also doppelt ungeeignet als Vorgabe.
+- [x] WPA3-SAE bestätigt? **Nein — der AP läuft mit WPA2-PSK** (22.08.2026 vom
+      Kameradisplay abgelesen). Monitor-Mode und der Mango als Mitschneider
+      sind damit brauchbar.
 - [ ] Liefert die P1100 über **USB**-PTP eine `operations_supported`-Liste?
       (Fremdmessung #1201 legt nahe: ja — umgeht die WLAN-Frage komplett)
 - [ ] Ist die P1100 tatsächlich ML-L7-kompatibel? (zuvor als belegt geführt,
@@ -66,6 +70,56 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026 — GATT-Baum an der Kamera bestätigt, WLAN-Parameter, kein AP im Menümodus
+Kommando:   `python tools/ble-probe.py scan`, dann `dump` (Windows-Python, bleak)
+            `netsh wlan show networks mode=bssid` / `netsh wlan connect`
+Aufbau:     Kamera eingeschaltet, Menü *Mit Smartgerät verbinden*. Bluetooth des
+            Laptops (Qualcomm FastConnect 7800), Handy nicht beteiligt.
+Ergebnis:   **1. Die Kamera advertised den Vendor-Service direkt.**
+            `name='P1100_xxxxxxxx'`, `services: ['0000de00-3dd4-4255-8d62-6dc7b9bd5561']`,
+            RSSI −65. Die BLE-Adresse ist eine Resolvable Private Address und
+            weicht von der im Stack-Log ab — sie rotiert, taugt nicht als Kennung.
+
+            **2. Verbindung ohne Pairing gelingt.** `connected: True, mtu=515`.
+            Ein Pairing mit dem Laptop war nicht nötig, obwohl die Kamera mit
+            dem Handy gekoppelt ist.
+
+            **3. Der GATT-Baum stimmt in jedem Feld mit dem Stack-Log überein** —
+            Service 0xde00 bei 0x0029, 18 Characteristics, alle Handles, alle
+            Property-Bits. Die zuvor nur abgeleiteten CCCDs sind bestätigt:
+            0x002c, 0x003d, 0x004c, 0x0051, je einen über dem Value-Handle.
+            Zusätzlich sichtbar: 0x1800 GAP (0x0001), 0x1801 GATT (0x0010),
+            **0x180a Device Information (0x006f)** mit 0x2a24/0x2a26/0x2a28/0x2a29
+            — Modell, Firmware, Software, Hersteller, alle lesbar.
+
+            **4. WLAN-Parameter (vom Kameradisplay abgelesen):** WPA2-PSK, Kanal 6,
+            DHCP-Adresse der Kamera `192.168.0.10`, SSID = der BLE-Gerätename.
+            Damit ist der zweite der beiden IP-Kandidaten bestätigt und der
+            erste (`192.168.1.1`) für dieses Modell hinfällig.
+
+            **5. Der AP läuft im Modus *Mit Smartgerät verbinden* nicht.**
+            Fünf Scans über mehrere Minuten zeigten nur Fremdnetze. Ein
+            Verbindungsversuch mit hinterlegtem Profil und `nonBroadcast=true`
+            (aktives Probing, findet auch versteckte SSIDs) blieb erfolglos:
+            Windows meldet Erfolg, bleibt aber im Heimnetz. Das Wi-Fi-Menü der
+            Kamera bietet keinen Eintrag, der die Verbindung startet — nur die
+            Anzeige der Parameter.
+
+            **6. Nach dem Trennen stellt die Kamera das Advertising ein.**
+            Drei Verbindungsversuche über eine Minute: `not advertising`.
+            Vermutlich Energiesparen; nicht abschließend geklärt.
+Folge:      `src/skyshutter/ble.py` und `tests/test_ble.py` unverändert gültig,
+            Kommentare von „abgeleitet" auf „bestätigt" korrigiert.
+            Neu `tools/ble-probe.py` — Messwerkzeug außerhalb des Pakets
+            (braucht `bleak`, läuft unter Windows-Python, weil WSL keinen
+            Bluetooth-Adapter hat). Unterkommandos `scan`, `dump`, `read`,
+            `watch`, `write`; `write` verweigert ohne `--i-know`.
+            WPA3-SAE-Frage erledigt: die Kamera bietet WPA2-PSK an, der
+            Laptop-Adapter beherrscht ohnehin WPA3-Personal (H2E).
+            Nächster Schritt: `read` auf die zehn lesbaren Characteristics und
+            `watch` auf die vier notify/indicate-fähigen, während die App das
+            WLAN startet — dort muss das Kommando sichtbar werden.
 
 ### 22.08.2026 — BLE-GATT-Baum der P1100 aus dem Bluetooth-Stack-Log
 Kommando:   `adb -P 5038 bugreport C:\Users\thoma\Downloads\skyshutter-bt.zip`,

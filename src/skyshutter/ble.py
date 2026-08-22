@@ -1,10 +1,10 @@
 """The camera's BLE GATT database, as measured.
 
-Everything in this module was read out of a phone's Bluetooth stack log while
-the vendor app was paired with the camera on 22.08.2026 — see
-docs/FINDINGS.md. It is structure only: the log records which handles and
-UUIDs exist, never the bytes that travelled over them. So this module can say
-*where* to write, and says nothing about *what* to write.
+Measured twice on 22.08.2026 and identical both times: first out of a phone's
+Bluetooth stack log while the vendor app was paired, then read straight off
+the camera over BLE — see docs/FINDINGS.md. It is structure only. Neither
+source says what the bytes mean, so this module can say *where* to write and
+nothing about *what*.
 
 The camera puts its whole remote-control surface into one vendor service and
 numbers the characteristics itself (0x2000, 0x2001, ...). Those numbers are
@@ -60,12 +60,10 @@ class Characteristic:
     def cccd_handle(self) -> int | None:
         """Handle of this characteristic's CCCD, or None if it has none.
 
-        Derived, not measured: the log lists characteristics but not their
-        descriptors. Exactly the four notify/indicate-capable entries are
-        followed by an unaccounted-for handle, and each gap sits directly
-        after the value handle — which is where a CCCD belongs. A capture
-        with payloads would confirm it; until then treat this as a good
-        first guess, not a measurement.
+        First derived from the handle gaps in the stack log, then confirmed
+        by reading the tree off the camera directly on 22.08.2026: the four
+        descriptors sit at 0x002c, 0x003d, 0x004c and 0x0051, one above each
+        notify- or indicate-capable value handle.
         """
         if self.properties & (Property.NOTIFY | Property.INDICATE):
             return self.value_handle + 1
@@ -80,8 +78,9 @@ def _char(uuid16: int, declaration: int, properties: int) -> Characteristic:
     return Characteristic(uuid16, declaration, declaration + 1, Property(properties))
 
 
-#: Measured 22.08.2026, in handle order. Absent from the range: 0x200a,
-#: 0x2081, 0x2085 — the camera does not expose them, or not in this state.
+#: Measured 22.08.2026, in handle order — first from a phone's stack log, then
+#: read off the camera over BLE the same day. Both agree in every field.
+#: Absent from the range: 0x200a, 0x2081, 0x2085.
 CHARACTERISTICS: tuple[Characteristic, ...] = (
     _char(0x2000, 0x002A, 0x2A),
     _char(0x2001, 0x002D, 0x0A),

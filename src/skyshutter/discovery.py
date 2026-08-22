@@ -1,8 +1,9 @@
 """Finding the camera and its control port on the camera's own access point.
 
-When a Nikon camera opens its WiFi it is normally the gateway of the network
-(192.168.1.1 on Coolpix models, 192.168.0.1 on some others).  Which service it
-exposes is the open question this module helps answer.
+When a Nikon camera opens its WiFi it hands out addresses itself.  This one
+takes 192.168.0.10, read off its own display on 22.08.2026 — not a gateway
+address, and not one of the values other Coolpix write-ups report.  Which
+service it exposes is the open question this module helps answer.
 """
 
 from __future__ import annotations
@@ -32,8 +33,15 @@ KNOWN_PORTS: dict[int, str] = {
     60152: "sony-style",
 }
 
-# Gateways seen on camera access points.
-LIKELY_HOSTS = ("192.168.1.1", "192.168.0.1", "192.168.4.1", "10.0.0.1")
+# Addresses seen on camera access points.  The first is measured on this
+# camera; the rest come from other people's write-ups and are guesses here.
+LIKELY_HOSTS = (
+    "192.168.0.10",
+    "192.168.1.1",
+    "192.168.0.1",
+    "192.168.4.1",
+    "10.0.0.1",
+)
 
 
 @dataclass
