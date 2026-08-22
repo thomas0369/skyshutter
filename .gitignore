@@ -12,3 +12,6 @@ captures/
 *.pcap
 *.pcapng
 *.log
+measurements/*.txt
+measurements/*.bin
+!measurements/*-redacted.txt

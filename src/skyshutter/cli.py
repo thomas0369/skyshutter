@@ -8,7 +8,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import config, discovery
+from . import btsnoop, config, discovery
 from .nikon import NikonCamera, NikonOperation
 from .ptp import DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import DEFAULT_PORT, PtpIpConnection, PtpIpError
@@ -94,6 +94,17 @@ def build_parser() -> argparse.ArgumentParser:
     raw.add_argument("params", type=_int, nargs="*")
     raw.add_argument("-o", "--out", type=Path, help="write the data phase to this file")
     raw.add_argument("--no-session", action="store_true", help="skip OpenSession")
+
+    # Not a camera command: it reads a file, so it skips the connection options.
+    snoop = sub.add_parser("btsnoop", help="decode the ATT/GATT traffic in a Bluetooth capture")
+    snoop.add_argument("path", type=Path, help="btsnoop_hci.log, or the bugreport zip holding it")
+    snoop.add_argument(
+        "--redact", action="store_true", help="hide values — use before quoting a capture publicly"
+    )
+    snoop.add_argument(
+        "--strings", action="store_true", help="only show packets carrying readable text"
+    )
+    snoop.add_argument("--handles", action="store_true", help="list the discovered handles instead")
 
     return parser
 
@@ -290,6 +301,32 @@ def cmd_raw(args: argparse.Namespace) -> int:
         connection.close()
 
 
+def cmd_btsnoop(args: argparse.Namespace) -> int:
+    capture = btsnoop.parse(args.path)
+
+    if args.handles:
+        if not capture.handle_uuids:
+            print("no handles discovered — the capture missed the service discovery")
+            return 1
+        for handle in sorted(capture.handle_uuids):
+            print(f"0x{handle:04x}  {capture.handle_uuids[handle]}")
+        return 0
+
+    shown = 0
+    for packet in capture.packets:
+        if args.strings and not btsnoop.printable_strings(packet.value):
+            continue
+        print(btsnoop.format_packet(capture, packet, redact=args.redact))
+        shown += 1
+
+    print(
+        f"\n{capture.records} records, {len(capture.packets)} ATT packets, "
+        f"{shown} shown, {len(capture.handle_uuids)} handles discovered",
+        file=sys.stderr,
+    )
+    return 0 if capture.packets else 1
+
+
 COMMANDS = {
     "probe": cmd_probe,
     "info": cmd_info,
@@ -298,6 +335,7 @@ COMMANDS = {
     "liveview": cmd_liveview,
     "stream": cmd_stream,
     "raw": cmd_raw,
+    "btsnoop": cmd_btsnoop,
 }
 
 
@@ -312,7 +350,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         return COMMANDS[args.command](args)
-    except (PtpError, PtpIpError) as exc:
+    except (PtpError, PtpIpError, btsnoop.BtsnoopError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:
