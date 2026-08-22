@@ -22,6 +22,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import struct
 import sys
 import time
 
@@ -274,6 +275,9 @@ async def cmd_pair(args) -> None:
 AUTH_UUID = "00002000-3dd4-4255-8d62-6dc7b9bd5561"
 NAME_UUID = "00002002-3dd4-4255-8d62-6dc7b9bd5561"
 ESTABLISH_UUID = "00002005-3dd4-4255-8d62-6dc7b9bd5561"
+TIME_UUID = "00002006-3dd4-4255-8d62-6dc7b9bd5561"
+FEATURE_UUID = "00002009-3dd4-4255-8d62-6dc7b9bd5561"
+SERVER_NAME_UUID = "00002003-3dd4-4255-8d62-6dc7b9bd5561"
 
 
 def auth_message(stage: int, stamp: bytes, device_id: bytes, nonce: bytes) -> bytes:
@@ -400,6 +404,44 @@ async def _pairing_once(args) -> None:
             await client.write_gatt_char(NAME_UUID, payload, response=True)
             print(f"  -> registered as {args.register!r}")
 
+        if args.mimic:
+            # The order the vendor app uses, taken from the doppelganger's log:
+            # write the client name, read the device name, set the clock, read
+            # the feature word. Doing it out of order may be why a lone write
+            # to 0x2005 did nothing.
+            import time as _time
+
+            now = _time.localtime()
+            stamp = (
+                struct.pack("<H", now.tm_year)
+                + bytes([now.tm_mon, now.tm_mday, now.tm_hour, now.tm_min, now.tm_sec])
+                + bytes.fromhex("040100")
+            )
+            log(f"  mimic: clock  {hexdump(stamp)}")
+            await client.write_gatt_char(TIME_UUID, stamp, response=True)
+            name = bytes(await client.read_gatt_char(SERVER_NAME_UUID))
+            log(f"  mimic: 0x2003 {hexdump(name)}")
+            feature = bytes(await client.read_gatt_char(FEATURE_UUID))
+            log(f"  mimic: 0x2009 {hexdump(feature)}")
+
+        if args.sweep:
+            # One byte, on a characteristic whose documented job is exactly
+            # this. Read it back after each value and report any change.
+            for value in [bytes([v]) for v in (0x00, 0x01, 0x02, 0x04, 0x05, 0x03)]:
+                before = bytes(await client.read_gatt_char(ESTABLISH_UUID))
+                try:
+                    await client.write_gatt_char(ESTABLISH_UUID, value, response=True)
+                    verdict = "accepted"
+                except Exception as exc:
+                    # The ATT error code is the interesting part: "insufficient
+                    # authorization" would mean the classic bond is the gate,
+                    # while "write not permitted" means the value is simply wrong.
+                    verdict = f"refused: {str(exc).splitlines()[0][:70]}"
+                await asyncio.sleep(2.5)
+                after = bytes(await client.read_gatt_char(ESTABLISH_UUID))
+                mark = "  <-- CHANGED" if after != before else ""
+                log(f"  0x2005 <- {value.hex()}: {verdict}, now {after.hex()}{mark}")
+
         if args.establish:
             payload = bytes.fromhex(args.establish)
             before = bytes(await client.read_gatt_char(ESTABLISH_UUID))
@@ -515,6 +557,12 @@ def main() -> None:
     )
     pairing.add_argument(
         "--loop", action="store_true", help="keep going forever; survives every drop"
+    )
+    pairing.add_argument(
+        "--mimic", action="store_true", help="replay the vendor app's post-handshake order"
+    )
+    pairing.add_argument(
+        "--sweep", action="store_true", help="try each plausible value on 0x2005"
     )
     pairing.add_argument("--device", help="reconnect with a known client id (hex)")
     pairing.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
