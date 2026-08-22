@@ -105,6 +105,50 @@ SnapBridge-Traffic gar nicht über den Router. Für die SnapBridge-Analyse also
   und keine POSIX-spezifischen Aufrufe, läuft also auch direkt unter Windows-Python.
   Falls die WSL-Netzwerkschicht zickt, ist das der kürzere Weg statt der Fehlersuche.
 
+## Das Handy an adb bekommen — zwei Fallen (gemessen 22.08.2026)
+
+Für den Bluetooth-Mitschnitt muss `adb` das Phone sehen. Auf diesem Rig scheitert
+das zweimal hintereinander, beide Male irreführend.
+
+**Falle 1: WSL sieht überhaupt kein USB.** Es gibt kein `/dev/bus/usb`, `lsusb`
+ist leer. Das Kabel hängt am Windows-Host, der Linux-Kernel in WSL kennt es
+nicht. Also nicht das adb aus WSL benutzen, sondern das von Windows:
+
+```bash
+ADB=/mnt/c/Users/thoma/AppData/Local/Android/Sdk/platform-tools/adb.exe
+```
+
+Ob Windows das Gerät überhaupt am Bus hat, beantwortet usbipd — das ist der
+Test, der zwischen „Kabel/Treiber kaputt" und „Software" trennt:
+
+```cmd
+usbipd list
+```
+
+Steht dort eine Zeile wie `2-1  22d9:2765  OnePlus 12, ADB Interface`, ist die
+Hardwareseite in Ordnung und der Fehler liegt weiter oben.
+
+**Falle 2: Port 5037 ist im Mirrored-Modus belegt.** Läuft WSL mit
+`networkingMode=mirrored`, teilen sich Windows und WSL den Loopback. Der
+adb-Server kann dann nicht auf seinem Standardport starten und meldet
+`could not read ok from ADB Server` — und zwar auch dann, wenn `netstat` und
+`ss` den Port als frei zeigen und kein einziger adb-Prozess läuft. Die
+Fehlermeldung führt in die Irre; es ist kein Prozesskonflikt, den man killen
+könnte. Abhilfe ist ein anderer Port, konsequent bei **jedem** Aufruf:
+
+```bash
+"$ADB" -P 5038 devices -l
+```
+
+Danach erscheint das Gerät zunächst als `unauthorized` — der RSA-Dialog auf dem
+Handy muss bestätigt werden („Diesem Computer immer vertrauen"). Erscheint der
+Dialog nicht, in den Entwickleroptionen *USB-Debugging-Autorisierungen
+widerrufen* und das Kabel neu stecken.
+
+Der Vollständigkeit halber: usbipd könnte das Handy auch nach WSL durchreichen
+(`usbipd bind --busid 2-1`, dann `usbipd attach --wsl`). Das braucht
+Administratorrechte und löst ein Problem, das man mit `-P 5038` nicht hat.
+
 ## Installation in WSL
 
 ```bash
