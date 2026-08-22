@@ -361,4 +361,5 @@ Was wir ausgeschlossen haben — damit es niemand erneut versucht.
 
 | Datum | Annahme | Womit widerlegt |
 |---|---|---|
-| — | — | — |
+| 22.08.2026 | Der HCI-Snoop-Schalter in den Entwickleroptionen liefert auf diesem Handy einen brauchbaren Mitschnitt | Aufzeichnung war aktiv (`dumpsys bluetooth_manager` → `sSnoopLogSettingAtEnable = FULL`), der Bugreport enthält 310 btsnoop-Dateien unter `FS/data/misc/bluetooth/logs/bthci/CsLog_*/BT_HCI_*.cfa` — **alle exakt 16 Byte, also nur Header ohne ein einziges Paket.** Der Hersteller filtert über `INIT_gd_hal_snoop_logger_filtering=true`. Beide Wege, das abzuschalten, sind ohne Root gesperrt: `device_config put` scheitert mit `SecurityException: must add flag to the allowlist`, `setprop persist.bluetooth.btsnoopenable` mit `Failed to set property`. |
+| 22.08.2026 | `01` auf `0x2005` startet den Access Point | Nach vollständiger Authentifizierung geschrieben, Kamera meldet Erfolg, Wert bleibt danach `03`, kein AP erscheint. Der Schreibzugriff wird angenommen, bewirkt aber nichts. |

@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import os
 import sys
+import time
 
 try:
     from bleak import BleakClient, BleakScanner
@@ -32,6 +33,11 @@ except ImportError:  # pragma: no cover - bench tool
 DEFAULT_NAME = "P1100_SSSSSSSS"
 AUTH_LENGTH = 17
 VENDOR_SERVICE = "0000de00-3dd4-4255-8d62-6dc7b9bd5561"
+
+
+def log(message: str) -> None:
+    """Print with a timestamp and flush, so a tail -f shows it at once."""
+    print(f"{time.strftime('%H:%M:%S')}  {message}", flush=True)
 
 
 def hexdump(data: bytes) -> str:
@@ -160,7 +166,7 @@ async def connect(args):
                 file=sys.stderr,
                 flush=True,
             )
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.3)
             continue
 
         # A connection can come up hollow: it reports success, negotiates the
@@ -175,7 +181,7 @@ async def connect(args):
                 flush=True,
             )
             await client.disconnect()
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.3)
             continue
         return client
     sys.exit("found the camera but could not get a usable connection")
@@ -267,6 +273,7 @@ async def cmd_pair(args) -> None:
 
 AUTH_UUID = "00002000-3dd4-4255-8d62-6dc7b9bd5561"
 NAME_UUID = "00002002-3dd4-4255-8d62-6dc7b9bd5561"
+ESTABLISH_UUID = "00002005-3dd4-4255-8d62-6dc7b9bd5561"
 
 
 def auth_message(stage: int, stamp: bytes, device_id: bytes, nonce: bytes) -> bytes:
@@ -297,7 +304,7 @@ async def cmd_handshake(args) -> None:
 
     client = await connect(args)
     async with client:
-        print(f"connected  mtu={client.mtu_size}")
+        log(f"connected  mtu={client.mtu_size}")
         before = bytes(await client.read_gatt_char(AUTH_UUID))
         print(f"  0x2000 before  {hexdump(before)}")
 
@@ -325,13 +332,42 @@ async def cmd_handshake(args) -> None:
 
 
 async def cmd_pairing(args) -> None:
-    """Run the whole four-stage handshake and register as a client."""
+    """Run the whole four-stage handshake, retrying the whole thing.
+
+    The link drops easily -- reopening the menu on the camera tears down an
+    open connection mid-exchange -- and a handshake interrupted after stage 1
+    is worthless. So the retry has to wrap the entire sequence, not the
+    individual reads.
+    """
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            await _pairing_once(args)
+            if not args.loop:
+                return
+            log(f"round {attempt} done; going again")
+        except SystemExit:
+            if not args.loop:
+                raise
+            log(f"round {attempt}: camera out of reach, waiting")
+        except Exception as exc:
+            log(f"round {attempt} broke off: {type(exc).__name__}: {str(exc)[:70]}")
+        if not args.loop and attempt >= args.attempts:
+            log(f"gave up after {attempt} attempts")
+            return
+        await asyncio.sleep(1)
+
+
+async def _pairing_once(args) -> None:
     import nikon_pairing as np
 
-    stage1 = np.stage_one()
+    saved_device = bytes.fromhex(args.device) if args.device else None
+    saved_nonce = bytes.fromhex(args.nonce) if args.nonce else None
+    stage1 = np.stage_one(saved_device, saved_nonce)
     client = await connect(args)
     async with client:
-        print(f"connected  mtu={client.mtu_size}")
+        log(f"connected  mtu={client.mtu_size}")
         print(f"  before   {hexdump(bytes(await client.read_gatt_char(AUTH_UUID)))}")
 
         print(f"  stage 1  {hexdump(stage1.encode())}")
@@ -363,6 +399,34 @@ async def cmd_pairing(args) -> None:
             print(f"  name     {hexdump(payload)}")
             await client.write_gatt_char(NAME_UUID, payload, response=True)
             print(f"  -> registered as {args.register!r}")
+
+        if args.establish:
+            payload = bytes.fromhex(args.establish)
+            before = bytes(await client.read_gatt_char(ESTABLISH_UUID))
+            print(f"\n  0x2005 before  {hexdump(before)}")
+            print(f"  0x2005 write   {hexdump(payload)}")
+            try:
+                await client.write_gatt_char(ESTABLISH_UUID, payload, response=True)
+                print("  -> accepted")
+            except Exception as exc:
+                print(f"  -> refused: {type(exc).__name__}: {str(exc).splitlines()[0][:90]}")
+            await asyncio.sleep(3.0)
+            print(f"  0x2005 after   {hexdump(bytes(await client.read_gatt_char(ESTABLISH_UUID)))}")
+
+        # Read everything again: authentication may unlock values that read as
+        # zero before, and comparing the two states is the cheapest way to see
+        # what the handshake actually bought us.
+        print("\n  --- values after authenticating ---")
+        for service in client.services:
+            for char in service.characteristics:
+                if "read" not in char.properties:
+                    continue
+                try:
+                    value = bytes(await client.read_gatt_char(char))
+                except Exception as exc:
+                    print(f"  {char.uuid[4:8]}  ERROR {type(exc).__name__}")
+                    continue
+                print(f"  {char.uuid[4:8]}  {hexdump(value)}")
 
         if args.seconds > 0:
             for service in client.services:
@@ -443,6 +507,17 @@ def main() -> None:
     pairing = sub.add_parser("pairing", help="run the full four-stage handshake")
     pairing.add_argument("--register", metavar="NAME", help="write this client name to 0x2002")
     pairing.add_argument("--seconds", type=float, default=0.0, help="listen afterwards")
+    pairing.add_argument(
+        "--establish", metavar="HEX", help="write this to 0x2005 after authenticating"
+    )
+    pairing.add_argument(
+        "--attempts", type=int, default=6, help="restarts of the whole handshake"
+    )
+    pairing.add_argument(
+        "--loop", action="store_true", help="keep going forever; survives every drop"
+    )
+    pairing.add_argument("--device", help="reconnect with a known client id (hex)")
+    pairing.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
     pairing.set_defaults(run=cmd_pairing)
     sub.add_parser("unpair", help="drop the bond").set_defaults(run=cmd_unpair)
 
