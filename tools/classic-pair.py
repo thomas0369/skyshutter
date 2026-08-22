@@ -42,6 +42,14 @@ except ImportError:  # pragma: no cover - bench tool
 DEFAULT_PREFIX = "P1100"
 
 
+RESOLVED: dict[str, str] = {}
+
+
+def resolved_name(device) -> str:
+    """Name as discovery finally saw it, which may differ from device.name."""
+    return RESOLVED.get(device.id) or device.name or ""
+
+
 def log(message: str) -> None:
     print(f"{time.strftime('%H:%M:%S')}  {message}", flush=True)
 
@@ -57,18 +65,45 @@ async def discover(prefix: str, seconds: float, paired: bool = False) -> list:
     selector = BluetoothDevice.get_device_selector_from_pairing_state(paired)
     watcher = DeviceInformation.create_watcher_aqs_filter(selector)
     seen: dict[str, object] = {}
+    names: dict[str, str] = {}
     done = asyncio.Event()
     loop = asyncio.get_running_loop()
+
+    async def name_of(device) -> str:
+        """The device name, asking the radio if Windows has not resolved it.
+
+        An inquiry often reports a device before its name arrives, and the
+        camera showed up as '' more than once. Filtering on the empty name
+        throws away exactly the device we are looking for.
+        """
+        if device.name:
+            return device.name
+        try:
+            resolved = await BluetoothDevice.from_id_async(device.id)
+        except Exception:
+            return ""
+        return resolved.name if resolved else ""
+
+    async def consider(device) -> None:
+        name = await name_of(device)
+        mark = "  <-- camera" if name.startswith(prefix) else ""
+        state = "paired" if device.pairing.is_paired else "unpaired"
+        log(f"  {name!r}  {state}{mark}")
+        names[device.id] = name
+        RESOLVED[device.id] = name
+        if name.startswith(prefix):
+            done.set()
 
     def on_added(sender, device):
         if device.id in seen:
             return
         seen[device.id] = device
-        mark = "  <-- camera" if device.name.startswith(prefix) else ""
-        state = "paired" if device.pairing.is_paired else "unpaired"
-        log(f"  {device.name!r}  {state}{mark}")
-        if device.name.startswith(prefix):
-            loop.call_soon_threadsafe(done.set)
+        asyncio.run_coroutine_threadsafe(consider(device), loop)
+
+    def on_updated(sender, update):
+        device = seen.get(update.id)
+        if device is not None and not names.get(update.id):
+            asyncio.run_coroutine_threadsafe(consider(device), loop)
 
     def on_completed(sender, _args):
         log("  inquiry round finished")
@@ -77,6 +112,7 @@ async def discover(prefix: str, seconds: float, paired: bool = False) -> list:
     # was an experiment that made things worse: it then found nothing at all,
     # not even devices that were plainly in range.
     watcher.add_added(on_added)
+    watcher.add_updated(on_updated)
     watcher.add_enumeration_completed(on_completed)
     watcher.start()
     try:
@@ -95,7 +131,7 @@ async def cmd_list(args) -> None:
 
 async def cmd_pair(args) -> None:
     devices = await discover(args.prefix, args.seconds)
-    targets = [d for d in devices if d.name.startswith(args.prefix)]
+    targets = [d for d in devices if resolved_name(d).startswith(args.prefix)]
     if not targets:
         sys.exit(
             f"no classic device named {args.prefix}* -- run the BLE handshake first "
@@ -151,7 +187,7 @@ async def cmd_services(args) -> None:
     This answers which, by reading its SDP records.
     """
     devices = await discover(args.prefix, args.seconds, paired=True)
-    targets = [d for d in devices if d.name.startswith(args.prefix)]
+    targets = [d for d in devices if resolved_name(d).startswith(args.prefix)]
     if not targets:
         sys.exit(f"no paired device named {args.prefix}*")
 
@@ -178,7 +214,7 @@ async def cmd_forget(args) -> None:
     # that already exists, which is the whole point of forgetting it.
     devices = await discover(args.prefix, args.seconds, paired=True)
     for device in devices:
-        if not device.name.startswith(args.prefix):
+        if not resolved_name(device).startswith(args.prefix):
             continue
         result = await device.pairing.unpair_async()
         log(f"unpair {device.name!r}: {DeviceUnpairingResultStatus(result.status).name}")

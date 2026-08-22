@@ -8,29 +8,23 @@ erste macht, ist authentifiziert, steht aber in keiner Geräteliste — das
 kostete hier einen halben Tag.
 
 ```
-Kamera-Menü öffnen
-      │
-      ▼
-[0] Bluetooth-Stack zurücksetzen          ← ohne das scheitert alles
+Kamera-Menü öffnen und offen lassen
       │
       ▼
 [1] BLE: vier Handshake-Stufen auf 0x2000
-      │   Clientname (32 B) auf 0x2002
+      │   Clientname (32 B) auf 0x2002, dann trennen
       ▼
-[2] BLE-Verbindung trennen
+[2] Klassischer Inquiry, Gerät über den Namen finden
+      │   Bonding, Zahlencode an der Kamera mit OK bestätigen
+      ▼
+[3] Reconnect-Handshake mit der eben vergebenen Kennung
       │
       ▼
-[3] Klassischer Inquiry, Gerät über den Namen finden
-      │
-      ▼
-[4] Bonding, Zahlencode an der Kamera mit OK bestätigen
-      │
-      ▼
-   gekoppelt — skyshutter steht in der Kameraliste
-      │
-      ▼
-[5] Kamera zeigt „Establishing connection"      ← hier stehen wir
+   „Your camera and smart device are connected!"
 ```
+
+Schlägt Schritt 2 fehl, weil der Inquiry nichts findet: Bluetooth aus- und
+einschalten, 12 s warten, alles wiederholen. Das Skript macht das selbst.
 
 ## Der Kommandoblock
 
@@ -38,20 +32,20 @@ Kamera-Menü öffnen
 PY='/mnt/c/Users/thoma/AppData/Local/Programs/Python/Python312/python.exe'
 cd /mnt/c/Users/thoma/AppData/Local/Temp
 
-# 0. Funk zuruecksetzen und 15 s warten
-powershell.exe -File bt_state.ps1 -Action Off
-powershell.exe -File bt_state.ps1 -Action On
-sleep 15
-
-# 1./2. BLE-Handshake als UNBEKANNTER Client
+# 1. BLE-Handshake als UNBEKANNTER Client
 "$PY" -u ble-probe.py --retries 40 --timeout 6 pairing --quick --register skyshutter
+#    Kennung aus der Zeile "remember  device=… nonce=…" merken
 
-# 3./4. Klassisches Bonding, Code an der Kamera bestaetigen
-"$PY" -u classic-pair.py --seconds 60 pair
+# 2. Klassisches Bonding, Code an der Kamera bestaetigen
+"$PY" -u classic-pair.py --seconds 45 pair
+
+# 3. Reconnect schliesst die Kopplung ab
+"$PY" -u ble-probe.py --retries 25 --timeout 6 pairing --quick --device <DEV> --nonce <NONCE>
 ```
 
-Das Skript `tools/` liegt im Repo; die Kopien unter `Temp` sind nötig, weil das
-Windows-Python keine WSL-Pfade mag.
+Der Reset gehört **nicht** an den Anfang: Er kostet zwölf Sekunden und ist nur
+nötig, wenn der Windows-Stack sich verschluckt hat. Erst versuchen, bei
+Misserfolg zurücksetzen und wiederholen.
 
 ## Die fünf Fallen
 
@@ -81,8 +75,12 @@ nach einer Sekunde meldet.
 **5. Der Windows-Bluetooth-Stack verschluckt sich.** Nach mehreren
 Verbindungs- und Watcher-Zyklen findet der Inquiry **nichts mehr** — auch
 Geräte nicht, die klar in Reichweite sind. Fünf Fehlversuche in Folge, dann
-nach `Off`/`On` sofort wieder alles gefunden. Deshalb steht der Reset an
-Position 0 und nicht als Notlösung am Rand.
+nach `Off`/`On` sofort wieder alles gefunden.
+
+**6. Der Inquiry meldet Geräte, bevor ihr Name da ist.** Die Kamera erschien
+mehrfach als `''`. Wer auf den leeren Namen filtert, wirft genau das Gerät weg,
+das er sucht. Namenlose Einträge müssen über `BluetoothDevice.from_id_async`
+nachgeschlagen und `Updated`-Ereignisse ausgewertet werden.
 
 ## Zeitfenster
 
@@ -124,12 +122,15 @@ kein Server, zu dem man sich verbinden könnte; sie will selbst verbinden.
 
 ## Was danach offen ist
 
-Nach dem Bonding zeigt die Kamera **„Establishing connection"** und wartet.
-Die Referenzimplementierung hält an dieser Stelle einen klassischen
-Bluetooth-Serial-Dienst offen und wartet ihrerseits darauf, dass die Kamera
-sich verbindet. `tools/rfcomm-listen.py` bietet genau das an (Serial Port,
-`00001101-0000-1000-8000-00805f9b34fb`) — **die Kamera verbindet sich
-trotzdem nicht.** Woran das liegt, ist die nächste offene Frage.
+Nach dem Bonding zeigt die Kamera **„Establishing connection"**. Läuft
+danach nichts, endet das nach einer Weile in **„could not connect"** — der Bond
+bleibt zwar bestehen und `skyshutter` steht in der Liste, aber die Kamera
+meldet einen Fehler.
 
-Ein anschließender *Reconnect*-Handshake mit der beim Pairing vergebenen
-Kennung bringt die Kamera zurück ins normale Menü, ohne Fehlermeldung.
+**Der Reconnect-Handshake ist der Abschluss.** Mit der Kennung, die beim
+Pairing vergeben wurde, quittiert die Kamera mit
+**„Your camera and smart device are connected!"** Ohne diesen dritten Schritt
+ist die Kopplung zwar eingetragen, aber nicht abgeschlossen.
+
+Ein RFCOMM-Serial-Dienst auf unserer Seite (`tools/rfcomm-listen.py`) wird
+dabei **nicht** benutzt. Die Kamera verbindet sich dorthin nicht.
