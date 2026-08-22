@@ -14,7 +14,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | 1 — Ist es PTP/IP? |
+| **Phase** | 1 — Ist es PTP/IP? · **PTP selbst ist bestätigt** (USB, 23.08.) |
 | **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
 | **Offenes Gate** | Was löst den WLAN-AP aus? Am Kameramenü geht es nicht (Herstellerdoku), also über BLE |
 | **Fehlende Messung** | Der Schreibzugriff der Hersteller-App, der den AP startet — Kandidaten `0x2004`, `0x2007`, `0x2082`, `0x2083`, `0x2087` |
@@ -34,9 +34,14 @@ Spiegelt die Liste in [protokoll.md](protokoll.md); abgehakt wird nur mit Messun
 
 - [ ] Antwortet die Kamera im Remote-Modus auf TCP 15740?
 - [ ] Wird eine ungepaarte GUID akzeptiert, oder ist der BLE-Handshake Pflicht?
-- [ ] Welche Vendor-Opcodes stehen in `operations_supported`?
-- [ ] Live View vorhanden — Header-Länge, Auflösung, Bildrate?
-- [ ] Vendor-Properties für den 125×-Zoom?
+- [x] Welche Vendor-Opcodes stehen in `operations_supported`? **38 Operationen,
+      über USB gemessen am 23.08.2026** — Liste unten und in protokoll.md.
+- [x] **Live View vorhanden?** **Ja** — `9201`, `9202`, `9203` stehen in der
+      Liste. Header-Länge, Auflösung und Bildrate bleiben offen, weil die
+      Kamera am USB-Kabel das Objektiv einzieht und den Start verweigert.
+- [x] Vendor-Properties für den 125×-Zoom? **`5008` Focal Length ist
+      schreibbar**, Bereich laut Kamera 24–3000 mm. Ob sich damit wirklich
+      zoomen lässt, ist ungetestet — ohne Live View sieht man es nicht.
 - [ ] Verträgt die Kamera parallele Sessions neben SnapBridge?
 - [x] Welche IP hat die Kamera als AP tatsächlich? **`192.168.0.10`**
       (22.08.2026 vom Kameradisplay abgelesen, Kanal 6). `192.168.1.1` ist für
@@ -71,6 +76,68 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 23.08.2026, 00:05 — `operations_supported` gemessen: Live View ist da
+Kommando:   `PtpUsbConnection.open(product=0x0234)` → `get_device_info()`
+            (eigener Code, `src/skyshutter/ptpusb.py`, über USB-C)
+Aufbau:     Kamera per USB am Laptop, über `usbipd-win` an WSL durchgereicht.
+            Kein WLAN, kein Bluetooth beteiligt.
+Ergebnis:   `Nikon Corporation P1100`, Firmware `COOLPIX P1100 V1.0`.
+            **38 Operationen**, 20 Device-Properties, Capture-Format `3801`
+            (EXIF/JPEG).
+
+            | Opcode | Name |
+            |---|---|
+            | 1001–100b | DeviceInfo, Session, Storage, Objekte, Thumb, Delete |
+            | 100c–100f | SendObjectInfo, SendObject, InitiateCapture, FormatStore |
+            | 1014–1016 | GetDevicePropDesc / GetValue / **SetValue** |
+            | 101b | GetPartialObject |
+            | 9016 | unbekannt |
+            | 90c1 | AfDrive |
+            | 90c2 | SetControlMode |
+            | 90c4 | GetLargeThumb |
+            | 90c8 | DeviceReady |
+            | **9201** | **StartLiveView** |
+            | **9202** | **EndLiveView** |
+            | **9203** | **GetLiveViewImg** |
+            | 9205 | ChangeAfArea |
+            | 9207 | InitiateCaptureRecInMedia |
+            | 941c, 941e, 9520, 9521, 9522 | unbekannt, Nikon-Vendor |
+            | 9801–9805 | MTP-Objekt-Properties (Microsoft) |
+
+            Properties: `5001 5007 5008 500a 500e 500f 5010 5011 5013` und die
+            Vendor-Reihe `d05d d0e1 d0e3 d0e4 d100 d1a2 d1a4 d1f1 d303 d406 d407`.
+
+            **Live View ist vorhanden** — alle drei Opcodes stehen in der Liste.
+            Damit ist die Frage, die das Projekt seit Beginn trägt, beantwortet.
+
+            **Und trotzdem läuft es über USB nicht.** Die Kamera antwortet auf
+            `9201` mit `Liveview cannot start: Lens is retracting`, und
+            `liveviewprohibit` nennt **genau diese eine** Bedingung. Grund,
+            von Thomas am Gerät beobachtet: **Die Kamera zieht das Objektiv ein,
+            sobald USB angeschlossen wird.** Das ist keine fehlende
+            Implementierung, sondern ein Zustand — und er erklärt rückwirkend
+            beide Fremdberichte (Issue #1201 hier, Issue #780 zum P950), die
+            das offengelassen hatten.
+
+            `SetControlMode` (`90c2`) steht zwar in der Liste, aber der Wert `1`
+            (PC-Steuerung) wird abgelehnt: `Failed to set new configuration
+            value 1`. Das Objektiv lässt sich über PTP nicht ausfahren.
+
+            **Über USB messbar, ohne Live View:** Brennweite (`5008`) ist
+            **schreibbar**, und die Kamera meldet `minfocallength 24 mm`,
+            `maxfocallength 3000 mm` — der volle 125×-Bereich. ISO (`500f`)
+            und Belichtungskorrektur (`5010`) ebenfalls schreibbar.
+Folge:      Neu `src/skyshutter/ptpusb.py` — zweiter Transport, gleiche
+            `transaction()`-Schnittstelle wie PTP/IP, damit `nikon.py`,
+            `mjpeg.py` und die CLI unverändert darauf laufen.
+            Liste übernommen in [protokoll.md](protokoll.md).
+
+            **Konsequenz für den Plan:** Der WLAN-Weg ist damit nicht mehr eine
+            von mehreren Optionen, sondern der **einzige**, der Bild und
+            Steuerung gleichzeitig liefern kann. HDMI schließt Funk aus, USB
+            zieht das Objektiv ein. Nur über WLAN bleibt die Kamera im
+            Aufnahmezustand — und dort greift die einzige bekannte Sperre nicht.
 
 ### 22.08.2026, 23:28 — Eine gekoppelte Kamera duldet keinen fremden Client
 Kommando:   `tools/ble-proxy.py --keepalive 2` (ohne Identität)
