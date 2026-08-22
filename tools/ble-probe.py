@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 
 try:
@@ -29,6 +30,7 @@ except ImportError:  # pragma: no cover - bench tool
     sys.exit("bleak is missing: pip install bleak")
 
 DEFAULT_NAME = "P1100_SSSSSSSS"
+AUTH_LENGTH = 17
 VENDOR_SERVICE = "0000de00-3dd4-4255-8d62-6dc7b9bd5561"
 
 
@@ -160,8 +162,23 @@ async def connect(args):
             )
             await asyncio.sleep(2)
             continue
+
+        # A connection can come up hollow: it reports success, negotiates the
+        # minimum MTU of 23 and exposes no services at all. Treat that as a
+        # failure -- it is indistinguishable from a working link until the
+        # first read fails with "characteristic not found".
+        if not any(s.uuid.lower() == VENDOR_SERVICE for s in client.services):
+            print(
+                f"  connect {attempt}/{args.retries}: hollow "
+                f"(mtu={client.mtu_size}, no vendor service)",
+                file=sys.stderr,
+                flush=True,
+            )
+            await client.disconnect()
+            await asyncio.sleep(2)
+            continue
         return client
-    sys.exit("found the camera but could not connect")
+    sys.exit("found the camera but could not get a usable connection")
 
 
 async def cmd_session(args) -> None:
@@ -248,6 +265,122 @@ async def cmd_pair(args) -> None:
             await asyncio.sleep(args.seconds)
 
 
+AUTH_UUID = "00002000-3dd4-4255-8d62-6dc7b9bd5561"
+NAME_UUID = "00002002-3dd4-4255-8d62-6dc7b9bd5561"
+
+
+def auth_message(stage: int, stamp: bytes, device_id: bytes, nonce: bytes) -> bytes:
+    """One 17-byte authentication message.
+
+    Stage byte, 8-byte timestamp, 4-byte device id, 4-byte nonce. Published
+    reverse engineering says the device id's least significant byte has to be
+    0x01; since the fields are little-endian, that is the first byte.
+    """
+    for label, value, size in (("stamp", stamp, 8), ("id", device_id, 4), ("nonce", nonce, 4)):
+        if len(value) != size:
+            raise ValueError(f"{label} must be {size} bytes, got {len(value)}")
+    return bytes([stage]) + stamp + device_id + nonce
+
+
+async def cmd_handshake(args) -> None:
+    """Run the first two stages of authentication and report what comes back.
+
+    Stages 3 and 4 need a Blowfish step whose input is not yet worked out, so
+    this stops after stage 2 on purpose. Stage 2 alone answers the question
+    that matters right now: does the camera engage with an unknown client at
+    all, or does it ignore it?
+    """
+    stamp = os.urandom(8)
+    device_id = b"\x01" + os.urandom(3)
+    nonce = os.urandom(4)
+    stage1 = auth_message(0x01, stamp, device_id, nonce)
+
+    client = await connect(args)
+    async with client:
+        print(f"connected  mtu={client.mtu_size}")
+        before = bytes(await client.read_gatt_char(AUTH_UUID))
+        print(f"  0x2000 before  {hexdump(before)}")
+
+        print(f"  stage 1 write  {hexdump(stage1)}")
+        try:
+            await client.write_gatt_char(AUTH_UUID, stage1, response=True)
+        except Exception as exc:
+            print(f"  write refused: {type(exc).__name__}: {str(exc).splitlines()[0][:90]}")
+            return
+
+        await asyncio.sleep(1.0)
+        reply = bytes(await client.read_gatt_char(AUTH_UUID))
+        print(f"  stage 2 read   {hexdump(reply)}")
+
+        if len(reply) == AUTH_LENGTH and reply[0] == 0x02:
+            print("  -> camera answered with stage 2")
+            print(f"     its timestamp  {reply[1:9].hex()}")
+            print(f"     challenge id   {reply[9:13].hex()}")
+            print(f"     challenge nonce{reply[13:17].hex()}")
+            print(f"     our id was     {device_id.hex()}   nonce {nonce.hex()}")
+        elif reply == before:
+            print("  -> unchanged; the write had no visible effect")
+        else:
+            print(f"  -> unexpected reply, stage byte 0x{reply[0]:02x}" if reply else "  -> empty")
+
+
+async def cmd_pairing(args) -> None:
+    """Run the whole four-stage handshake and register as a client."""
+    import nikon_pairing as np
+
+    stage1 = np.stage_one()
+    client = await connect(args)
+    async with client:
+        print(f"connected  mtu={client.mtu_size}")
+        print(f"  before   {hexdump(bytes(await client.read_gatt_char(AUTH_UUID)))}")
+
+        print(f"  stage 1  {hexdump(stage1.encode())}")
+        await client.write_gatt_char(AUTH_UUID, stage1.encode(), response=True)
+        await asyncio.sleep(1.0)
+
+        stage2 = np.Message.decode(bytes(await client.read_gatt_char(AUTH_UUID)))
+        print(f"  stage 2  {hexdump(stage2.encode())}")
+        if stage2.stage != 0x02:
+            print(f"  camera did not answer with stage 2 (got 0x{stage2.stage:02x})")
+            return
+
+        stage3 = np.stage_three(stage1, stage2)
+        print(f"  salt     #{np.find_salt(stage1, stage2)}")
+        print(f"  stage 3  {hexdump(stage3.encode())}")
+        await client.write_gatt_char(AUTH_UUID, stage3.encode(), response=True)
+        await asyncio.sleep(1.0)
+
+        stage4 = np.Message.decode(bytes(await client.read_gatt_char(AUTH_UUID)))
+        print(f"  stage 4  {hexdump(stage4.encode())}")
+        if stage4.stage != 0x04:
+            print(f"  handshake rejected at stage 4 (got 0x{stage4.stage:02x})")
+            return
+        print(f"  -> authenticated; camera serial {stage4.serial!r}")
+        print(f"  -> remember  device={stage1.device.hex()} nonce={stage1.nonce.hex()}")
+
+        if args.register:
+            payload = np.client_name(args.register)
+            print(f"  name     {hexdump(payload)}")
+            await client.write_gatt_char(NAME_UUID, payload, response=True)
+            print(f"  -> registered as {args.register!r}")
+
+        if args.seconds > 0:
+            for service in client.services:
+                for char in service.characteristics:
+                    if not {"notify", "indicate"} & set(char.properties):
+                        continue
+
+                    def handler(sender, data, uuid=char.uuid):
+                        print(f"  EVENT {uuid[4:8]}  {hexdump(bytes(data))}", flush=True)
+
+                    try:
+                        await client.start_notify(char, handler)
+                    except Exception:
+                        pass
+            print(f"  listening {args.seconds}s", flush=True)
+            await asyncio.sleep(args.seconds)
+
+
 async def cmd_unpair(args) -> None:
     """Drop the bond again.
 
@@ -303,6 +436,14 @@ def main() -> None:
     pair.add_argument("--seconds", type=float, default=30.0, help="listen after pairing")
     pair.set_defaults(run=cmd_pair)
 
+    sub.add_parser("handshake", help="run stages 1-2 of authentication").set_defaults(
+        run=cmd_handshake
+    )
+
+    pairing = sub.add_parser("pairing", help="run the full four-stage handshake")
+    pairing.add_argument("--register", metavar="NAME", help="write this client name to 0x2002")
+    pairing.add_argument("--seconds", type=float, default=0.0, help="listen afterwards")
+    pairing.set_defaults(run=cmd_pairing)
     sub.add_parser("unpair", help="drop the bond").set_defaults(run=cmd_unpair)
 
     write = sub.add_parser("write", help="write one value (guarded)")

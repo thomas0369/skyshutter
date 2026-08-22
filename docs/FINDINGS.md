@@ -71,6 +71,38 @@ Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
 
+### 22.08.2026 — Authentifizierung: Stufe 2 gemessen, Handshake offline reproduziert
+Kommando:   `python tools/ble-probe.py --retries 12 --timeout 15 handshake`
+Aufbau:     Kamera im Menü *Mit Smartgerät verbinden*. Laptop, ungekoppelt.
+            Erster schreibender Zugriff auf die Kamera in diesem Projekt,
+            freigegeben von Thomas.
+Ergebnis:   ```
+            0x2000 before   04 0000000000000000 3230303130325160
+            stage 1 write   01 a4f393a6e83b5231 010ec1e5 791879b3
+            stage 2 read    02 0000039300003282 83fc0efc c9b2caab
+            ```
+            Der Vorzustand war **Stufe 4** und trug ASCII `200102…` — die
+            Kamera hielt noch die Authentifizierung der App. Auf unsere Stufe 1
+            antwortete sie mit einer Challenge in Stufe 2.
+
+            **Offline nachgerechnet und getroffen:** Salt **#6**
+            (`0xcd32687f`, `0xa9e28a30`) reproduziert `83fc0efc c9b2caab`
+            exakt aus den beiden Zeitstempeln. Ein Zufallstreffer über 64 Bit
+            ist auszuschließen. Damit ist das Verfahren an dieser Kamera belegt,
+            nicht nur der fremden Quelle nacherzählt.
+
+            Daraus folgt Stufe 3: `03 a4f393a6e83b5231 859463d4 73422394`.
+Folge:      Neu `tools/nikon_pairing.py`. Der Hash ist Blowfish/ECB mit festem
+            Schlüssel `ffffaa5511223300`, verkettet: Startzustand
+            `0x01020304`/`0x05060708`, je zwei Eingabewörter werden mit dem
+            Zustand XOR-verknüpft, verschlüsselt, das Chiffrat wird der neue
+            Zustand. **Innen big-endian, auf dem Draht little-endian.**
+
+            **Die Wortreihenfolge ist die Falle:** Bei der Salt-Suche steht der
+            Zeitstempel der Kamera zuerst, in der Antwort der eigene. Vertauscht
+            passt kein einziger Salt, und nichts sagt einem warum — genau
+            dieser Fehler kostete hier den ersten Anlauf.
+
 ### 22.08.2026 — Wann die Kamera überhaupt erreichbar ist
 Kommando:   `python tools/ble-probe.py scan --seconds 10`, `pair`, `unpair`, `session`
 Ergebnis:   **1. Der Beacon hängt am Menü.** Die Kamera advertised nur, solange
