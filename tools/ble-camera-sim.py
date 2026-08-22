@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import platform
 import struct
 import sys
 import time
@@ -31,6 +32,7 @@ from uuid import UUID
 try:
     import winrt.windows.devices.bluetooth.genericattributeprofile as gatt
     from winrt.windows.devices.bluetooth import BluetoothError
+    from winrt.windows.foundation import AsyncStatus
     from winrt.windows.storage.streams import DataReader, DataWriter
 except ImportError:  # pragma: no cover - bench tool
     sys.exit("needs the Windows Python with the winrt packages (pip install winrt-runtime)")
@@ -145,6 +147,27 @@ class Camera:
         self.serial = serial
         self.stage1: np.Message | None = None
         self.salt = 0
+        self.characteristics: dict[int, object] = {}
+
+    def push(self, uuid16: int, value: bytes) -> None:
+        """Send a value out, rather than waiting to be read.
+
+        0x2000 is indicate-capable and the app never reads it back -- it waits
+        to be told. Storing the answer is not enough; it has to be pushed.
+        """
+        self.values[uuid16] = value
+        char = self.characteristics.get(uuid16)
+        if char is None:
+            return
+        clients = len(char.subscribed_clients)
+        if not clients:
+            log(f"  (nobody subscribed to {label(uuid16)}, cannot push)")
+            return
+        try:
+            block(char.notify_value_async(from_bytes(value)), timeout=3.0)
+            log(f"  -> pushed {hexdump(value)} to {clients} subscriber(s)")
+        except Exception as exc:
+            log(f"  ! push failed: {type(exc).__name__}: {exc}")
 
     # --- the handshake, from the camera's side ------------------------------
 
@@ -160,7 +183,7 @@ class Camera:
             self.salt = int.from_bytes(os.urandom(1), "big") % len(np.SALTS)
             reply = self._stage_two(message)
             log(f"  handshake stage 1 in; answering with stage 2, salt #{self.salt}")
-            self.values[0x2000] = reply.encode()
+            self.push(0x2000, reply.encode())
 
         elif message.stage == 0x03:
             if self.stage1 is None:
@@ -169,7 +192,7 @@ class Camera:
             expected = np.stage_three_for_salt(self.stage1, self._last_stage2, self.salt)
             ok = message.device + message.nonce == expected.device + expected.nonce
             log(f"  handshake stage 3 in; client answer {'correct' if ok else 'WRONG'}")
-            self.values[0x2000] = self._stage_four().encode()
+            self.push(0x2000, self._stage_four().encode())
             if ok:
                 log("  -> app is now authenticated")
         else:
@@ -216,6 +239,19 @@ class Camera:
             log("  *** LSS_CONTROL_POINT -- shutter or remote command ***")
 
 
+def block(operation, timeout: float = 2.0):
+    """Wait for a WinRT async operation from a plain thread.
+
+    These handlers run on a WinRT callback thread with no event loop, so
+    asyncio is no help -- and the operation is normally finished before we
+    even look. Spin briefly and take the result.
+    """
+    deadline = time.monotonic() + timeout
+    while operation.status == AsyncStatus.STARTED and time.monotonic() < deadline:
+        time.sleep(0.001)
+    return operation.get_results()
+
+
 def to_bytes(buffer) -> bytes:
     reader = DataReader.from_buffer(buffer)
     return bytes(reader.read_buffer(buffer.length))
@@ -223,7 +259,7 @@ def to_bytes(buffer) -> bytes:
 
 def from_bytes(payload: bytes):
     writer = DataWriter()
-    writer.write_bytes(list(payload))
+    writer.write_bytes(payload)
     return writer.detach_buffer()
 
 
@@ -231,8 +267,21 @@ async def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--serial", default=DEFAULT_SERIAL)
     parser.add_argument("--name", default=None, help="what to report in 0x2003")
+    parser.add_argument(
+        "--host-name",
+        action="store_true",
+        help="report this machine's own name in 0x2003 instead of a camera name",
+    )
     args = parser.parse_args()
-    name = args.name or f"P1100_{args.serial}"
+    # After the BLE handshake the client drops the link and hunts for a
+    # *classic* Bluetooth device whose name matches -- the reference
+    # implementation compares it verbatim. Windows takes its Bluetooth name
+    # from the computer name and will not let us change it, so the way to be
+    # findable is to answer with that name here.
+    if args.host_name:
+        name = os.environ.get("COMPUTERNAME") or platform.node()
+    else:
+        name = args.name or f"P1100_{args.serial}"
 
     camera = Camera(args.serial, name)
 
@@ -252,23 +301,39 @@ async def main() -> int:
             continue
         char = char_result.characteristic
 
+        # The request only arrives via an async call, and these handlers run on
+        # a WinRT thread with no event loop of its own -- hence asyncio.run.
         def on_read(sender, event, _uuid=uuid16):
             deferral = event.get_deferral()
-            value = camera.read(_uuid)
-            log(f"READ  {label(_uuid)}  {hexdump(value)}")
-            event.request.respond_with_value(from_bytes(value))
-            deferral.complete()
+            try:
+                request = block(event.get_request_async())
+                value = camera.read(_uuid)
+                log(f"READ  {label(_uuid)}  {hexdump(value)}")
+                request.respond_with_value(from_bytes(value))
+            except Exception as exc:
+                log(f"! read {label(_uuid)} failed: {type(exc).__name__}: {exc}")
+            finally:
+                deferral.complete()
 
         def on_write(sender, event, _uuid=uuid16):
             deferral = event.get_deferral()
-            request = event.request
-            camera.write(_uuid, to_bytes(request.value))
-            if request.option == gatt.GattWriteOption.WRITE_WITH_RESPONSE:
-                request.respond()
-            deferral.complete()
+            try:
+                request = block(event.get_request_async())
+                camera.write(_uuid, to_bytes(request.value))
+                if request.option == gatt.GattWriteOption.WRITE_WITH_RESPONSE:
+                    request.respond()
+            except Exception as exc:
+                log(f"! write {label(_uuid)} failed: {type(exc).__name__}: {exc}")
+            finally:
+                deferral.complete()
+
+        def on_subscribers(sender, _args, _uuid=uuid16):
+            log(f"SUBSCRIBE {label(_uuid)}: {len(sender.subscribed_clients)} client(s)")
 
         char.add_read_requested(on_read)
         char.add_write_requested(on_write)
+        char.add_subscribed_clients_changed(on_subscribers)
+        camera.characteristics[uuid16] = char
 
     advertising = gatt.GattServiceProviderAdvertisingParameters()
     advertising.is_connectable = True
