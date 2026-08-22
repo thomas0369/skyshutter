@@ -77,7 +77,18 @@ echten Inquiry. Er muss das ganze Zeitfenster durchlaufen; ihn bei
 `EnumerationCompleted` zu stoppen findet gar nichts, weil Windows das schon
 nach einer Sekunde meldet.
 
-**5. Der Windows-Bluetooth-Stack verschluckt sich.** Nach mehreren
+**5a. Die Kamera verweigert nach mehreren Kopplungen jedes Bonding.** Das war
+der teuerste Effekt des Tages. Nach etwa zehn Kopplungs- und Entkopplungszyklen
+antwortete sie überhaupt nicht mehr: im Inquiry sofort gefunden, aber die
+Kopplungsanfrage blieb unbeantwortet, dreimal in Folge, über eine Stunde. Auch
+**Windows' eigene Kopplungsroutine** scheiterte dann (`FAILED`), nicht nur die
+eigenen API-Aufrufe — daran erkennt man, dass es nicht am Client liegt.
+
+**Abhilfe: die Kamera aus- und wieder einschalten.** Danach lief das Bonding
+beim ersten Versuch, Code nach einer Sekunde. Vorher hatten wir stundenlang
+Windows zurückgesetzt und die Kamera nie.
+
+**5b. Der Windows-Bluetooth-Stack verschluckt sich.** Nach mehreren
 Verbindungs- und Watcher-Zyklen findet der Inquiry **nichts mehr** — auch
 Geräte nicht, die klar in Reichweite sind. Fünf Fehlversuche in Folge, dann
 nach `Off`/`On` sofort wieder alles gefunden.

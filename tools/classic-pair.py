@@ -197,12 +197,24 @@ async def cmd_pair(args) -> None:
         result = await custom.pair_async(kinds)
         status = result.status
         name = DevicePairingResultStatus(status).name
-        log(f"result: {name}  (attempt {attempt}/{args.attempts})")
+        log(f"result: {name}  (custom {attempt}/{args.attempts})")
         if status == DevicePairingResultStatus.PAIRED:
             log("  -> bonded; the camera should now list this machine")
             return
         if attempt < args.attempts:
             await asyncio.sleep(2)
+
+    # Custom pairing lets us answer the code ourselves, but it also means we
+    # drive the exchange. When the camera never asks, fall back to Windows'
+    # own routine -- the same one the Add-a-device dialog uses. It handles the
+    # request differently and may get an answer where ours does not.
+    log("  custom pairing got no answer; trying Windows' own routine")
+    result = await device.pairing.pair_async()
+    status = result.status
+    log(f"result: {DevicePairingResultStatus(status).name}  (default)")
+    if status == DevicePairingResultStatus.PAIRED:
+        log("  -> bonded via the default routine")
+        return
     log("  -> not bonded")
 
 
