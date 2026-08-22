@@ -18,7 +18,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
 | **Offenes Gate** | Was löst den WLAN-AP aus? Am Kameramenü geht es nicht (Herstellerdoku), also über BLE |
 | **Fehlende Messung** | Der Schreibzugriff der Hersteller-App, der den AP startet — Kandidaten `0x2004`, `0x2007`, `0x2082`, `0x2083`, `0x2087` |
-| **Nächster Schritt** | `tools/ble-proxy.py` zwischen App und Kamera hängen und in der App die Fernaufnahme wählen |
+| **Nächster Schritt** | Proxy ohne `--device` starten, in der App die **Fernaufnahme** wählen (nicht koppeln — dabei findet sie uns nicht) und den Schreibzugriff mitlesen |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-22 |
 
@@ -71,6 +71,55 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026, 23:12 — Die App spricht durch den Proxy mit der echten Kamera
+Kommando:   `tools/ble-proxy.py --keepalive 2` (ohne `--device`/`--nonce`)
+Aufbau:     Proxy an der Kamera, App auf dem Handy verbindet sich mit dem Proxy.
+Ergebnis:   **Der vollständige Handshake lief zwischen App und echter Kamera
+            durch uns hindurch:**
+            ```
+            23:12:58  WRITE  0x2000  <- 01…  (App, Stufe 1)
+            23:12:58  NOTIFY 0x2000  -> 02…  (Kamera, Stufe 2)
+            23:12:58  WRITE  0x2000  <- 03…  (App, Stufe 3)
+            23:12:58  NOTIFY 0x2000  -> 04…30325160  (Kamera, Stufe 4)
+            23:12:58  WRITE  0x2002  <- Android_CPH2581_4311
+            23:12:59  READ   0x2003  -> P1100_SSSSSSSS   <- echter Name
+            23:12:59  WRITE  0x2006  <- Uhr
+            23:12:59  READ   0x2009  -> fd010000
+            ```
+            Die App hat sich damit bei der **echten** Kamera registriert — was
+            der Doppelgänger nie erreicht hat, weil er den Namen nicht führen
+            konnte.
+
+            **Ein Keepalive-Handshake des Proxys blockiert die App.** Läuft der
+            Proxy mit `--device`/`--nonce`, weist die Kamera den Handshake der
+            App mit `GATT Protocol Error: Application-specific Error 0x80` ab:
+            pro Verbindung nimmt sie nur einen. Lesezugriffe allein halten die
+            Verbindung genauso gut — **eine Authentifizierung ist dafür nicht
+            nötig**, über vier Minuten ohne Abbruch gemessen. Also ohne
+            `--device` fahren.
+
+            **Bekannte Grenze, noch nicht behoben:** Die App macht nach dem
+            ersten Handshake sofort einen zweiten. Trennt sie zwischendurch ihre
+            Seite, bleibt unsere Kamera-Verbindung bestehen und trägt den alten
+            Zustand — der zweite Handshake scheitert dann ebenfalls mit `0x80`.
+            Richtig wäre, die Kamera-Verbindung zu erneuern, sobald die App ihre
+            trennt. Ungetestet, deshalb nicht eingebaut.
+
+            **Zum Koppeln taugt der Proxy nicht.** Beim Pairing sucht die App
+            nach dem Advertising-Namen; die Kamera sendet `P110`, wir senden den
+            Windows-Gerätenamen, und `GattServiceProvider` bietet kein Feld, das
+            zu ändern. Die App bricht mit „Kamera nicht gefunden" ab. Beim
+            *Reconnect* sucht sie über die Service-UUID und findet uns sofort.
+            Wer das Koppeln über den Proxy braucht, muss den Computernamen auf
+            den Kameranamen setzen (Adminrechte, Neustart).
+
+            **Kein Bonding ohne Erstregistrierung.** Die App meldete sich in
+            jedem Lauf mit derselben gespeicherten Kennung, also als Reconnect —
+            und die Kamera öffnete ihre klassische Seite nicht, es kam kein
+            Zahlencode. Das bestätigt Falle 3 aus [pairing.md](pairing.md) von
+            der anderen Seite.
+Folge:      `tools/ble-proxy.py` läuft ohne `--device`/`--nonce`.
 
 ### 22.08.2026, 22:41 — BLE-Proxy zwischen App und Kamera; die Kamera wirft stille Clients raus
 Kommando:   `tools/ble-proxy.py --device DDDDDDDD --nonce NNNNNNNN --keepalive 3`

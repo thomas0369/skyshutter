@@ -270,7 +270,11 @@ async def main() -> int:
     parser.add_argument("--retries", type=int, default=40)
     parser.add_argument("--timeout", type=float, default=6.0)
     parser.add_argument("--transcript", default=None)
-    parser.add_argument("--device", help="our paired identity, hex; keeps the link alive")
+    # Measured 22.08.2026: authenticating here makes the camera reject the
+    # app's own handshake with error 0x80 -- it takes one per connection. The
+    # keepalive reads hold the link on their own, so leave this alone unless
+    # something else needs the proxy to be a paired client.
+    parser.add_argument("--device", help="authenticate as this identity; blocks the app")
     parser.add_argument("--nonce", help="the nonce that goes with it, hex")
     parser.add_argument(
         "--keepalive",
@@ -292,9 +296,8 @@ async def main() -> int:
     # happen before anything else -- otherwise the app arrives to find a proxy
     # whose upstream is already gone.
     if args.device and args.nonce:
+        log("! authenticating: the app's own handshake will be refused with 0x80")
         await proxy.authenticate(bytes.fromhex(args.device), bytes.fromhex(args.nonce))
-    else:
-        log("no --device/--nonce given: the camera will drop us in about 8 seconds")
 
     # Mirror the camera's own layout rather than a hardcoded table: whatever it
     # offers is what the app gets to see.
