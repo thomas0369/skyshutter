@@ -16,9 +16,10 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 — Ist es PTP/IP? |
 | **Offenes Gate** | Antwortet die P1100 im Fernsteuerungsmodus auf TCP 15740? |
-| **Fehlende Messung** | `skyshutter probe` — davor muss der Kamera-AP überhaupt laufen |
-| **Blockiert durch** | Die Kamera startet ihr WLAN nicht über das Menü. Der AP muss per BLE-Kommando gestartet werden; welches Byte das ist, ist unbekannt. |
-| **Nächster Schritt** | `tools/ble-probe.py session` mitlaufen lassen, während die App das WLAN startet — das Kommando muss dabei sichtbar werden |
+| **Erreicht** | **Vollständige Kopplung** — skyshutter steht in der Geräteliste der Kamera (22.08.2026) |
+| **Fehlende Messung** | Wie ein gekoppelter Client den Fernsteuerungsmodus startet |
+| **Nächster Schritt** | Als gekoppelter Client `0x2005` und `0x2008` erneut prüfen — vorher schlugen sie fehl, weil wir nicht registriert waren |
+| **Unsere Kennung** | `device=01dcca74 nonce=877b17f2` — damit meldet man sich als bekannter Client an |
 | **Stand vom** | 2026-08-22 |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
@@ -70,6 +71,51 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026 — Vollständige Kopplung: skyshutter steht in der Geräteliste der Kamera
+Kommando:   `tools/ble-probe.py pairing --register skyshutter` (ohne `--device`/`--nonce`!),
+            direkt danach `tools/classic-pair.py pair`
+Aufbau:     Kamera im Menü *Mit Smartgerät verbinden*. Laptop, Windows-Bluetooth.
+            Kein Handy beteiligt.
+Ergebnis:   ```
+            BLE-Handshake: salt #3, stage 4 -> authenticated
+            registriert als 'skyshutter'
+            Kennung vergeben: device=01dcca74 nonce=877b17f2
+            CLASSIC: 'P1100_SSSSSSSS'  unpaired  <-- gefunden
+            pairing with 'P1100_SSSSSSSS'
+            *** code 629949 -- OK an der Kamera gedrückt ***
+            result: PAIRED
+            ```
+            **An der Kamera steht `skyshutter` jetzt unter den gekoppelten
+            Geräten.** Windows führt umgekehrt `P1100_SSSSSSSS` mit Status OK.
+
+            Die Kopplung besteht aus zwei Teilen, die beide nötig sind:
+            1. **BLE-Pairing-Handshake** — vier Stufen auf `0x2000`, danach
+               Clientname (32 B ASCII) auf `0x2002`.
+            2. **Klassisches Bluetooth-Bonding** — Inquiry, Gerät über den
+               Namen finden, `BTA_DmBond`, Zahlencode an der Kamera mit OK
+               bestätigen. Zeitfenster rund 30 Sekunden.
+Folge:      Neu `tools/classic-pair.py` (`list`, `pair`, `forget`) und
+            `tools/rfcomm-listen.py`.
+
+            **Zwei Fallen, beide gemessen:**
+
+            *Der Handshake muss als **unbekannter** Client laufen.* Mit
+            `--device`/`--nonce` ist es ein Reconnect, und nach einem Reconnect
+            macht sich die Kamera **nicht** für klassisches Bluetooth sichtbar.
+            Genau daran scheiterten die ersten Versuche: BLE lief durch, der
+            anschließende Inquiry fand nichts.
+
+            *Der Inquiry braucht einen `DeviceWatcher` auf dem Selektor für
+            **ungepaarte** Geräte.* `DeviceInformation.find_all_async` liefert
+            nur den Windows-Cache, und der ist für ungepaarte Geräte leer — die
+            Suche meldet null Geräte, obwohl die Kamera sendet.
+
+            Nach dem Bonding wartet die Kamera darauf, dass der Client eine
+            serielle Verbindung anbietet; sie zeigt dabei „establishing
+            connection". Ohne einen solchen Dienst endet das in „could not
+            connect". Nach einem **Reconnect**-Handshake mit der beim Pairing
+            vergebenen Kennung kehrt sie ins normale Menü zurück.
 
 ### 22.08.2026 — Authentifizierung: Stufe 2 gemessen, Handshake offline reproduziert
 Kommando:   `python tools/ble-probe.py --retries 12 --timeout 15 handshake`
