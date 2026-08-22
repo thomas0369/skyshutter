@@ -129,6 +129,25 @@ def find_salt(stage1: Message, stage2: Message) -> int:
     raise HandshakeError("no salt reproduces the camera's challenge")
 
 
+def stage_three_for_salt(stage1: Message, stage2: Message, salt: int) -> Message:
+    """Stage 3 when the salt is already known.
+
+    The camera knows which salt it picked, so when we play the camera we skip
+    the search. Same computation either way -- note the word order flips
+    relative to find_salt: our timestamp leads here.
+    """
+    salt_a, salt_b = SALTS[salt]
+    our_lo, our_hi = stage1.halves
+    cam_lo, cam_hi = stage2.halves
+    left, right = blowfish_hash([salt_a, salt_b, our_lo, our_hi, cam_lo, cam_hi])
+    return Message(
+        stage=0x03,
+        timestamp=stage1.timestamp,
+        device=struct.pack(">I", left),
+        nonce=struct.pack(">I", right),
+    )
+
+
 def stage_three(stage1: Message, stage2: Message) -> Message:
     """Answer the challenge, keeping our original timestamp."""
     if stage1.stage != 0x01 or stage2.stage != 0x02:
