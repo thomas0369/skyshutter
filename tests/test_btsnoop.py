@@ -71,6 +71,27 @@ def test_reads_a_bugreport_zip(tmp_path):
     assert len(capture.packets) == 1
 
 
+def test_reads_a_capture_stored_under_an_oem_name(tmp_path):
+    """OxygenOS puts it in /data/misc/bluetooth/logs/, not the AOSP path."""
+    inner = build_capture([(True, acl(l2cap(write_command(0x0010, b"hi"))))])
+    path = tmp_path / "bugreport.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("FS/data/misc/bluetooth/logs/bluetooth_20260822_071644.log", inner)
+    assert len(parse(path).packets) == 1
+
+
+def test_a_bluetooth_text_log_is_not_mistaken_for_a_capture(tmp_path):
+    """The name matches but the content is a stack log — measured 22.08.2026."""
+    path = tmp_path / "bugreport.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr(
+            "FS/data/misc/bluetooth/logs/bluetooth_20260822_071644.log",
+            b"Current process 18937\n[gatt_cl.cc:123] gatt_act_discovery\n",
+        )
+    with pytest.raises(BtsnoopError, match="no btsnoop log"):
+        parse(path)
+
+
 def test_zip_without_a_capture_is_an_error(tmp_path):
     path = tmp_path / "bugreport.zip"
     with zipfile.ZipFile(path, "w") as archive:

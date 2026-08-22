@@ -18,10 +18,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Offenes Gate** | Antwortet die P1100 im Fernsteuerungsmodus auf TCP 15740? |
 | **Fehlende Messung** | Ausgabe von `skyshutter probe` im Kamera-WLAN |
 | **Blockiert durch** | Hardware-Zugang (nur Thomas) |
-| **Stand vom** | 2026-08-21 |
+| **Stand vom** | 2026-08-22 |
 
-**Nichts in diesem Dokument ist bisher an echter Hardware gemessen.** Der Code
-ist ausschließlich gegen den Simulator getestet.
+**Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
+PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
+`nikon.py` ist weiterhin ausschließlich gegen den Simulator getestet.
 
 ---
 
@@ -44,6 +45,13 @@ Spiegelt die Liste in [protokoll.md](protokoll.md); abgehakt wird nur mit Messun
 - [ ] Ist die P1100 tatsächlich ML-L7-kompatibel? (zuvor als belegt geführt,
       Nachrecherche fand keine offizielle Bestätigung — der furble-Quick-Win
       hängt daran)
+- [ ] Welche Bytes fließen über die write-only-Characteristics 0x2002, 0x2007,
+      0x2083? Eine davon dürfte den WLAN-Start auslösen. Braucht einen
+      btsnoop-Mitschnitt mit Nutzdaten — der Bugreport gibt sie nicht her.
+- [ ] Tragen 0x2000/0x2084/0x2087 (indicate) den Antwortkanal, und 0x2008
+      (notify) die Ereignisse? Reine Vermutung aus den Property-Bits.
+- [ ] Stimmt die CCCD-Ableitung (Value-Handle + 1) für die vier
+      notify/indicate-Characteristics?
 
 ---
 
@@ -59,7 +67,66 @@ Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
 
-*(noch keine Einträge)*
+### 22.08.2026 — BLE-GATT-Baum der P1100 aus dem Bluetooth-Stack-Log
+Kommando:   `adb -P 5038 bugreport C:\Users\thoma\Downloads\skyshutter-bt.zip`,
+            danach Auswertung von `FS/data/misc/bluetooth/logs/bluetooth_20260822_071644_18937.log`
+Aufbau:     Kamera BLE-gepaart mit der Hersteller-App auf dem Android-Phone
+            (OnePlus, OxygenOS). Kein WLAN, kein PTP/IP. Kamera nicht im
+            Fernsteuerungsmodus. Session 07:17–07:18.
+Ergebnis:   Identität belegt:
+            `btm_ble_sec.cc: BTM_GetRemoteDeviceName: bd_addr:xx:xx:xx:xx:xx:xx name:P1100_xxxxxxxx`
+            (137×; der Gerätename trägt eine achtstellige Kennung, geschwärzt.
+            Dieselbe Adresse ist mit 1234 Zeilen die dominante im Log und trägt
+            die unten genannte Service-Discovery).
+
+            Ein einziger Vendor-Service trägt die gesamte Fernsteuerung:
+            `0000de00-3dd4-4255-8d62-6dc7b9bd5561`, Handles 0x0029–0x0051.
+            Alle 18 Characteristics liegen auf derselben Vendor-Base
+            `-3dd4-4255-8d62-6dc7b9bd5561` — **nicht** auf der Bluetooth-Base.
+
+            | UUID16 | Decl | Value | Props |
+            |---|---|---|---|
+            | 0x2000 | 0x002a | 0x002b | 0x2a read+write+indicate |
+            | 0x2001 | 0x002d | 0x002e | 0x0a read+write |
+            | 0x2002 | 0x002f | 0x0030 | 0x08 write |
+            | 0x2003 | 0x0031 | 0x0032 | 0x02 read |
+            | 0x2004 | 0x0033 | 0x0034 | 0x0a read+write |
+            | 0x2005 | 0x0035 | 0x0036 | 0x0a read+write |
+            | 0x2006 | 0x0037 | 0x0038 | 0x0a read+write |
+            | 0x2007 | 0x0039 | 0x003a | 0x08 write |
+            | 0x2008 | 0x003b | 0x003c | 0x1a read+write+notify |
+            | 0x2009 | 0x003e | 0x003f | 0x02 read |
+            | 0x2a19 | 0x0040 | 0x0041 | 0x02 read |
+            | 0x200b | 0x0042 | 0x0043 | 0x02 read |
+            | 0x2080 | 0x0044 | 0x0045 | 0x02 read |
+            | 0x2082 | 0x0046 | 0x0047 | 0x0a read+write |
+            | 0x2083 | 0x0048 | 0x0049 | 0x08 write |
+            | 0x2084 | 0x004a | 0x004b | 0x22 read+indicate |
+            | 0x2086 | 0x004d | 0x004e | 0x02 read |
+            | 0x2087 | 0x004f | 0x0050 | 0x2a read+write+indicate |
+
+            Nicht vorhanden im Bereich: 0x200a, 0x2081, 0x2085.
+            0x2a19 kollidiert numerisch mit dem SIG-Battery-Level, ist auf der
+            Vendor-Base aber etwas anderes.
+
+            **Grenze dieser Quelle:** Das Stack-Log protokolliert Struktur, keine
+            Nutzdaten. `gatt_process_notification` erscheint 4× ohne Inhalt; eine
+            Suche nach `(len|value|data)=` über alle GATT-Zeilen liefert null
+            Treffer. Handle-Werte und Payloads sind aus dem Bugreport **nicht**
+            rekonstruierbar. Der Bugreport enthält zudem kein `btsnoop_hci.log`
+            — das Entwickleroption-Log war während des Pairings nicht aktiv.
+Folge:      Neu `src/skyshutter/ble.py` (Tabelle als Datenstruktur) und
+            `tests/test_ble.py` (18 Tests, nageln die Messung fest).
+            Verschlüsselter Mitschnitt im Repo: `captures/bt-logs-2026-08-22.tar.gz.gpg`
+            (AES256, symmetrisch; Passphrase außerhalb des Repos).
+            Offene Frage „ML-L7-kompatibel?" bleibt offen — der Vendor-Service
+            0xde00 ist nicht das ML-L7-Profil.
+
+Abgeleitet, nicht gemessen: Vier Handles im Bereich sind unbelegt (0x002c,
+0x003d, 0x004c, 0x0051), und genau vier Characteristics können notify oder
+indicate. Jede Lücke liegt direkt hinter einem Value-Handle — dort gehört ein
+CCCD (0x2902) hin. Plausibel, aber erst durch einen Mitschnitt mit Nutzdaten
+belegt.
 
 ---
 

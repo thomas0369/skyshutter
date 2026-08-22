@@ -149,6 +149,54 @@ Der Vollständigkeit halber: usbipd könnte das Handy auch nach WSL durchreichen
 (`usbipd bind --busid 2-1`, dann `usbipd attach --wsl`). Das braucht
 Administratorrechte und löst ein Problem, das man mit `-P 5038` nicht hat.
 
+## Den Bluetooth-Mitschnitt vom Handy holen
+
+**Falle 3: `adb shell ls /data/misc/bluetooth/logs` gibt `Permission denied.`**
+Ohne Root kommt man an das Verzeichnis nicht heran. `adb bugreport` schon — es
+startet `dumpstate` mit erhöhten Rechten und packt genau diese Verzeichnisse
+mit ein:
+
+```bash
+"$ADB" -P 5038 bugreport 'C:\Users\thoma\Downloads\skyshutter-bt.zip'
+cp /mnt/c/Users/thoma/Downloads/skyshutter-bt.zip captures/
+```
+
+Ein Windows-Zielpfad, kein WSL-Pfad — das Windows-adb kann mit `\\wsl$\…`
+nicht zuverlässig umgehen.
+
+**Falle 4: die Datei heißt nicht `btsnoop_hci.log`.** Auf OxygenOS liegen die
+Bluetooth-Logs als `FS/data/misc/bluetooth/logs/bluetooth_<zeitstempel>.log`.
+Wer im Zip nach `snoop` sucht, findet nur ein NFC-Log und schließt fälschlich,
+es gäbe keine Bluetooth-Daten. Richtig ist die Suche nach `bluetooth`.
+
+**Und der wichtige Unterschied:** Diese OEM-Dateien sind **Textlogs des Stacks**,
+kein btsnoop. Sie zeigen die GATT-Struktur — Services, Handles, Property-Bits —
+aber **keine Nutzdaten**. Für Handle-Werte und Payloads muss vor dem Pairing in
+den Entwickleroptionen *Bluetooth-HCI-Snoop-Log* aktiviert und das Handy neu
+gestartet werden; erst dann entsteht ein echtes btsnoop, das
+`skyshutter.btsnoop` lesen kann.
+
+### Mitschnitte im Repo
+
+Rohmitschnitte enthalten Seriennummern, Geräteadressen und potenziell SSID und
+Passphrase. Sie gehen nur **verschlüsselt** ins öffentliche Repo; `.gitignore`
+lässt in `captures/` ausschließlich `*.gpg` durch. Ein Bugreport als Ganzes
+gehört nicht hinein — er enthält Dateilisten und Dokumente, die mit dem Projekt
+nichts zu tun haben. Verschlüsselt wird nur, was ausgewertet wurde:
+
+```bash
+tar -czf - -C /tmp/btlogs bluetooth_2026*.log |
+  gpg --symmetric --cipher-algo AES256 -o captures/bt-logs-2026-08-22.tar.gz.gpg
+```
+
+Wieder heraus:
+
+```bash
+gpg -d captures/bt-logs-2026-08-22.tar.gz.gpg | tar -xzf - -C /tmp/btlogs
+```
+
+Die Passphrase steht nirgends im Repo.
+
 ## Installation in WSL
 
 ```bash

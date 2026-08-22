@@ -196,16 +196,35 @@ def format_uuid(raw: bytes) -> str:
     return raw.hex()
 
 
+def _looks_like_a_capture(archive: zipfile.ZipFile, name: str) -> bool:
+    """Peek at a zip member's first bytes instead of extracting all of it."""
+    try:
+        with archive.open(name) as member:
+            return member.read(len(BTSNOOP_MAGIC)) == BTSNOOP_MAGIC
+    except (KeyError, OSError, zipfile.BadZipFile):
+        return False
+
+
 def _open_capture(path: Path) -> bytes:
     """Return the capture bytes, reaching into a bugreport zip when handed one."""
     if zipfile.is_zipfile(path):
         with zipfile.ZipFile(path) as archive:
-            candidates = [n for n in archive.namelist() if "btsnoop" in n.lower()]
-            if not candidates:
-                raise BtsnoopError(f"no btsnoop log inside {path}")
+            # AOSP names it btsnoop_hci.log; OEMs do not. Measured on OxygenOS
+            # (22.08.2026): /data/misc/bluetooth/logs/bluetooth_<stamp>.log, and
+            # those are plain text, not captures. So filter by name, then check
+            # the magic — a name match alone produced a false positive here.
+            named = [
+                n
+                for n in archive.namelist()
+                if "btsnoop" in n.lower()
+                or ("bluetooth" in n.lower() and n.lower().endswith(".log"))
+            ]
             # A bugreport carries the live log and rotated older ones; take the live one.
-            candidates.sort(key=lambda n: ("last" in n.lower(), n))
-            return archive.read(candidates[0])
+            named.sort(key=lambda n: ("last" in n.lower(), n))
+            for name in named:
+                if _looks_like_a_capture(archive, name):
+                    return archive.read(name)
+            raise BtsnoopError(f"no btsnoop log inside {path}")
     return path.read_bytes()
 
 
