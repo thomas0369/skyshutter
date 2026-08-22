@@ -339,6 +339,71 @@ Die Lücke im Ökosystem ist damit belegt, nicht nur vermutet.
 
 ---
 
+## 10b. Wie das Bild zu einem Stream wird — drei Wege
+
+Recherchestand 22.08.2026. Die Frage lautet nicht „geht Streaming", sondern
+über welchen Kanal das Bild die Kamera verlässt.
+
+### HDMI — belegt, sofort, und schließt dieses Projekt aus
+
+Clean HDMI ist ein **offiziell beworbenes Merkmal** dieses Modells
+[PRIMÄR, Herstellerdoku]: Micro-HDMI Typ D, Informationsanzeige abschaltbar,
+Ausgabeauflösung wählbar. Ein UVC-Capture-Stick (20–40 €) macht daraus ohne
+jedes Protokollwissen einen Stream.
+
+Der Preis steht im selben Handbuchabschnitt:
+
+> „Wireless communication is not available when the camera and an
+> HDMI-compatible device are connected."
+
+Dazu bei eingeschaltetem Clean HDMI: **kein 4K**, **keine Standbildaufnahme**,
+kein Peaking, Kameradisplay aus. Über USB steht dort nichts — es scheint als
+einziger Kanal offen zu bleiben.
+
+**Konsequenz: HDMI und skyshutter schließen sich aus.** Steckt das Kabel, ist
+die gesamte BLE- und WLAN-Strecke tot. Als Rückfallebene brauchbar, als
+Erstwahl beendet es das Projekt in seiner jetzigen Form.
+
+### USB-PTP — der billigste Erkenntnisgewinn, aber unbelegt
+
+Issue #1201 zu diesem Modell und Issue #780 zum P950 zeigen dasselbe Bild:
+Browsing und Download funktionieren, `--capture-preview` scheitert mit
+`Liveview cannot start: Lens is retracting`. Beide Fälle ungelöst, der P950-Fall
+ebenfalls für Astrofotografie. **Kein bestätigter Erfolg bei irgendeiner
+Coolpix.** [PRIMÄR, fremde Messung]
+
+Die Meldung ist aber eine **Antwort der Kamera**, kein Absturz — sie hat den
+Opcode verstanden und verweigert ihn wegen eines Zustands. In keinem der beiden
+Berichte steht, dass jemand es mit ausgefahrenem Objektiv im Aufnahmemodus
+versucht hat.
+
+**Der Hebel liegt darin, dass die Live-View-Opcodes transportunabhängig sind.**
+Klärt sich „Lens is retracting" über Kabel, wissen wir auch, ob der WLAN-Weg
+jemals ein Bild liefern kann — bevor der AP-Trigger geknackt ist.
+
+Weg unter WSL: `usbipd-win` reicht das Gerät an Linux durch, dann gphoto2.
+
+### PTP/IP über WLAN — das Ziel, blockiert am AP-Trigger
+
+Danach fehlt keine Zeile Code: `ptpip.py` spricht den Transport, `nikon.py` hat
+`start_live_view`, `get_live_view_frame` und `stream_live_view`, `mjpeg.py` ist
+ein fertiger HTTP-MJPEG-Server.
+
+### Aufwand für einen USB-Transport
+
+`nikon.py` benutzt von seiner Verbindung **nur `transaction()`**. Ein
+USB-Transportmodul mit derselben Methode — PTP-über-USB ist Bulk-In/Bulk-Out
+mit einem 12-Byte-Container statt TCP-Rahmen — genügt; `nikon.py`, `mjpeg.py`
+und die CLI bleiben unangetastet.
+
+### Nicht verfügbar
+
+Nikons **Webcam Utility unterstützt die Coolpix-Linie nicht** — die Liste ist
+Z-Serie und DSLR. Die auf Produktseiten kursierende Kameraliste mit P1000 ist
+die SnapBridge-Liste, nicht die des Webcam-Werkzeugs. [PRIMÄR, negativer Befund]
+
+---
+
 ## 11. Was sich für den Plan ändert
 
 1. **USB ist ein zweiter, unabhängiger Messpfad.** Issue #1201 zeigt, dass die
@@ -347,6 +412,10 @@ Die Lücke im Ökosystem ist damit belegt, nicht nur vermutet.
    das WPA3-Problem. Das umgeht die aktuelle Blockade in Phase 1 teilweise.
 2. **Die Live-View-Frage ist halb beantwortet.** Der Opcode existiert und wird
    beantwortet. Offen ist nur noch der Objektivzustand und der Transport.
+   Nachtrag 22.08.: Beim P950 scheitert derselbe Aufruf mit derselben Meldung,
+   ebenfalls ungelöst — es gibt **keine Coolpix mit belegtem Live View über
+   PTP**. Der Test mit ausgefahrenem Objektiv im Aufnahmemodus steht aus und
+   ist der billigste offene Messpunkt des Projekts. Siehe Abschnitt 10b.
 3. **`vcam` als Gegenprobe** neben dem eigenen Simulator einplanen.
 4. **ML-L7-Kompatibilität der P1100 vor dem furble-Abend prüfen** — sie ist
    unbelegt.
