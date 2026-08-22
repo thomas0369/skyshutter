@@ -37,19 +37,29 @@ def hexdump(data: bytes) -> str:
     return f"{len(data):3}B  {data.hex()}  |{text}|"
 
 
-async def find(name: str, timeout: float, retries: int = 4):
+async def find(args):
     """Scan until the camera shows up.
 
-    It advertises in bursts and goes quiet in between, so a single scan that
-    happens to land in a quiet stretch means nothing. Its address is a
-    resolvable private one and rotates, so match on the name.
+    It only advertises while *Connect to smart device* is open on its own
+    screen — leave that menu and it goes silent within seconds. So a scan that
+    finds nothing usually means nobody is standing at the camera, not that
+    anything is broken. Its address is a resolvable private one and rotates,
+    so match on the name.
     """
-    for attempt in range(1, retries + 1):
-        device = await BleakScanner.find_device_by_name(name, timeout=timeout)
+    def matches(device, adv) -> bool:
+        # Never match on the name. The advertisement carries a 128-bit service
+        # UUID, which eats 16 of the 31 payload bytes, so the camera ships a
+        # shortened local name -- 'P110' -- and a name lookup finds nothing.
+        # The service UUID is the reliable marker, and unlike the address
+        # (resolvable private, rotates every scan) it does not change.
+        return any(u.lower() == VENDOR_SERVICE for u in adv.service_uuids)
+
+    for attempt in range(1, args.retries + 1):
+        device = await BleakScanner.find_device_by_filter(matches, timeout=args.timeout)
         if device is not None:
             return device
-        print(f"  scan {attempt}/{retries}: silent", file=sys.stderr)
-    sys.exit(f"{name} is not advertising - wake the camera and retry")
+        print(f"  scan {attempt}/{args.retries}: silent", file=sys.stderr, flush=True)
+    sys.exit("camera not advertising - open the smart-device menu on the camera")
 
 
 async def cmd_scan(args) -> None:
@@ -72,7 +82,7 @@ async def cmd_scan(args) -> None:
 
 
 async def cmd_dump(args) -> None:
-    device = await find(args.name, args.timeout)
+    device = await find(args)
     async with BleakClient(device, timeout=args.timeout) as client:
         print(f"connected {device.address}  mtu={client.mtu_size}")
         for service in client.services:
@@ -89,7 +99,7 @@ async def cmd_dump(args) -> None:
 
 
 async def cmd_read(args) -> None:
-    device = await find(args.name, args.timeout)
+    device = await find(args)
     async with BleakClient(device, timeout=args.timeout) as client:
         print(f"connected {device.address}  mtu={client.mtu_size}")
         for service in client.services:
@@ -108,7 +118,7 @@ async def cmd_read(args) -> None:
 
 
 async def cmd_watch(args) -> None:
-    device = await find(args.name, args.timeout)
+    device = await find(args)
     async with BleakClient(device, timeout=args.timeout) as client:
         print(f"connected {device.address}  mtu={client.mtu_size}")
         subscribed = []
@@ -134,7 +144,7 @@ async def cmd_session(args) -> None:
     Reconnecting costs a scan each time and the camera is not always awake, so
     when it is reachable, take everything at once.
     """
-    device = await find(args.name, args.timeout)
+    device = await find(args)
     async with BleakClient(device, timeout=args.timeout) as client:
         print(f"connected {device.address}  mtu={client.mtu_size}\n")
 
@@ -179,11 +189,62 @@ async def cmd_session(args) -> None:
         await asyncio.sleep(args.seconds)
 
 
+async def cmd_pair(args) -> None:
+    """Bond with the camera, the way the vendor app does.
+
+    The camera asks for a button press on its own body while this runs. Note
+    that it may only remember one bonded device, so pairing here can cost the
+    phone its pairing.
+    """
+    device = await find(args)
+    async with BleakClient(device, timeout=args.timeout) as client:
+        print("connected; press OK on the camera when it asks", flush=True)
+        try:
+            paired = await client.pair()
+        except Exception as exc:
+            print(f"pairing failed: {type(exc).__name__}: {str(exc)[:120]}")
+            return
+        print("paired:", paired)
+        if paired and args.seconds > 0:
+            for service in client.services:
+                for char in service.characteristics:
+                    if not {"notify", "indicate"} & set(char.properties):
+                        continue
+
+                    def handler(sender, data, uuid=char.uuid):
+                        print(f"  EVENT {uuid[4:8]}  {hexdump(bytes(data))}", flush=True)
+
+                    try:
+                        await client.start_notify(char, handler)
+                    except Exception as exc:
+                        print(f"  cannot subscribe {char.uuid[4:8]}: {str(exc)[:70]}")
+            print(f"listening {args.seconds}s", flush=True)
+            await asyncio.sleep(args.seconds)
+
+
+async def cmd_unpair(args) -> None:
+    """Drop the bond again.
+
+    A half-finished pairing is worse than none: Windows stores the bond, the
+    camera does not, and every later connection attempt then dies in an
+    encryption handshake that cannot succeed. Symptom is a connect timeout on
+    a device that scanning finds without trouble.
+    """
+    device = await find(args)
+    client = BleakClient(device, timeout=args.timeout)
+    try:
+        result = await client.unpair()
+    except Exception as exc:
+        print(f"unpair failed: {type(exc).__name__}: {str(exc)[:120]}")
+        return
+    print("unpair:", result)
+
+
 async def cmd_write(args) -> None:
     if not args.i_know:
         sys.exit("refusing to write without --i-know")
     payload = bytes.fromhex(args.hex)
-    device = await find(args.name, args.timeout)
+    device = await find(args)
     async with BleakClient(device, timeout=args.timeout) as client:
         print(f"write {args.uuid} <- {payload.hex()}")
         await client.write_gatt_char(args.uuid, payload, response=not args.no_response)
@@ -194,6 +255,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--name", default=DEFAULT_NAME, help="advertised device name")
     parser.add_argument("--timeout", type=float, default=25.0)
+    parser.add_argument("--retries", type=int, default=4, help="scan attempts before giving up")
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="list advertising devices")
@@ -210,6 +272,12 @@ def main() -> None:
     session = sub.add_parser("session", help="dump, read and listen in one connection")
     session.add_argument("--seconds", type=float, default=45.0, help="0 skips listening")
     session.set_defaults(run=cmd_session)
+
+    pair = sub.add_parser("pair", help="bond with the camera (needs a button press on it)")
+    pair.add_argument("--seconds", type=float, default=30.0, help="listen after pairing")
+    pair.set_defaults(run=cmd_pair)
+
+    sub.add_parser("unpair", help="drop the bond").set_defaults(run=cmd_unpair)
 
     write = sub.add_parser("write", help="write one value (guarded)")
     write.add_argument("uuid")

@@ -71,6 +71,38 @@ Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
 
+### 22.08.2026 — Wann die Kamera überhaupt erreichbar ist
+Kommando:   `python tools/ble-probe.py scan --seconds 10`, `pair`, `unpair`, `session`
+Ergebnis:   **1. Der Beacon hängt am Menü.** Die Kamera advertised nur, solange
+            *Mit Smartgerät verbinden* auf ihrem eigenen Display offen steht.
+            Menü verlassen → binnen Sekunden still. Alle vorherigen „silent"-
+            Läufe und Verbindungs-Timeouts hatten diese eine Ursache. Zuvor als
+            Energiesparen gedeutet — falsch.
+
+            **2. Der advertisierte Name ist gekürzt.** Im Advertising steht
+            `'P110'`, nicht `P1100_SSSSSSSS`. Der 128-Bit-Service-UUID belegt 16
+            der 31 Byte Nutzlast, für den vollen Namen bleibt kein Platz, also
+            schickt die Kamera einen *Shortened Local Name*. **Folge: nie über
+            den Namen suchen.** Die Service-UUID `0000de00-…` ist der
+            zuverlässige Marker; die Adresse taugt nicht, sie rotiert.
+
+            **3. Kopplung gelingt einseitig und schadet nicht.** `pair` legte
+            in Windows einen Bond an (`Get-PnpDevice` zeigt `P1100_SSSSSSSS`,
+            Status OK), ohne dass an der Kamera eine Taste gedrückt wurde.
+            bleak 3.0.2 gibt dabei `None` statt `True` zurück — das ist kein
+            Fehlschlag. `unpair` entfernt den Bond wieder.
+
+            **4. Verbindungen scheitern reproduzierbar, unabhängig vom Bond.**
+            Nach dem ersten erfolgreichen Dump lief jeder weitere
+            Verbindungsversuch in `TimeoutError`, obwohl der Scan das Gerät
+            sofort fand — gekoppelt wie entkoppelt. Der erste, erfolgreiche
+            Versuch fand statt, als am Handy nicht gearbeitet wurde.
+Folge:      `tools/ble-probe.py` sucht jetzt über die Service-UUID statt über
+            den Namen und kennt `pair`/`unpair`.
+            **Offene Vermutung, ungeprüft:** Die Kamera erlaubt nur eine
+            BLE-Verbindung gleichzeitig, und die App hält sie. Prüfbar, indem
+            Bluetooth am Handy ausgeschaltet und danach verbunden wird.
+
 ### 22.08.2026 — Alle lesbaren BLE-Characteristics ausgelesen
 Kommando:   `python tools/ble-probe.py session --seconds 0`
 Aufbau:     Wie unten. Ohne Pairing, ohne Handy. Kein einziger Lesezugriff wurde
