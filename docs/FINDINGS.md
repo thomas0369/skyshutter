@@ -16,11 +16,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 — Ist es PTP/IP? · **PTP selbst ist bestätigt** (USB, 23.08.) |
 | **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
-| **Offenes Gate** | Was löst den WLAN-AP aus? Am Kameramenü geht es nicht (Herstellerdoku), also über BLE |
-| **Fehlende Messung** | Der Schreibzugriff der Hersteller-App, der den AP startet — Kandidaten `0x2004`, `0x2007`, `0x2082`, `0x2083`, `0x2087` |
-| **Nächster Schritt** | Hybrid-Proxy an Hardware testen: Funk-Reset, Kameramenü, `ble-proxy.py --device … --nonce …`, dann Handy-Bluetooth an und in der App **Fernaufnahme** (nicht koppeln — dabei findet die App uns nicht) |
+| **Offenes Gate** | Startet `0x01` auf `0x2005` als **gekoppelter** Client den AP? Der Befehl steht fest (Herstellercode, 23.08.), die Wirkung ist ungemessen |
+| **Fehlende Messung** | Ein Schreibversuch als gekoppelter Client, danach ein WLAN-Scan |
+| **Nächster Schritt** | Funk-Reset → Kameramenü → `ble-probe.py pairing --device … --nonce … --establish 01` → `netsh wlan show networks` |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-22 |
+| **Stand vom** | 2026-08-23 |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -76,6 +76,89 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 23.08.2026, 02:00 — Der WLAN-Auslöser, aus der Hersteller-App gelesen
+Quelle:     SnapBridge 2.13.3, per `adb pull` vom eigenen Handy geholt (68 MB,
+            signiert, kein Drittanbieter-Download), mit baksmali in 11.721
+            Smali-Dateien zerlegt. Vier Agenten haben unabhängig voneinander
+            gesucht; die Kernaussagen decken sich.
+            **Rang: dekompilierter Herstellercode.** Kein Messwert an der
+            Hardware — die Wirkung ist noch nicht bestätigt.
+            Rechtsgrundlage: § 69e UrhG, Dekompilierung zur Herstellung von
+            Interoperabilität. Gelesen zur Verifikation, nicht kopiert.
+
+Ergebnis:   **`0x2005` ist ein Bitfeld, kein Zustandswert.** Ein Byte,
+            little-endian:
+
+            | Bit | Maske | Bedeutung | wer schreibt es |
+            |---|---|---|---|
+            | 0 | `0x01` | **WLAN aufbauen** | der WiFi-Pfad des Backends |
+            | 1 | `0x02` | Bluetooth Classic aufbauen | der BT-Pfad |
+            | 7 | `0x80` | Verbindung nicht mehr nötig | eigener Task, niedrigste Priorität |
+
+            **Der AP-Start ist ein einziges Byte `0x01` auf `0x2005`.** Der
+            Encoder setzt alle drei Bits, der Decoder liest nur Bit 0 und 1
+            zurück — Bit 7 wird beim Lesen verworfen.
+
+            **Der Ablauf davor**, aus dem WiFi-Anwendungsfall des Backends:
+            1. `0x2004` **lesen**
+            2. prüfen, ob ein WLAN-Block vorhanden ist; fehlt er, Abbruch
+            3. SSID, Passwort, Verschlüsselungsmodus entnehmen
+            4. **`0x01` auf `0x2005` schreiben** — der AP-Start
+            5. erst danach android-seitig ins Netz einbuchen
+
+            **`0x2004` wird nur gelesen, nie geschrieben.** Die App kann die
+            Zugangsdaten der Kamera über BLE nicht setzen. Layout der 102 Byte:
+
+            | Offset | Länge | Feld |
+            |---|---|---|
+            | 0 | 1 | Flags: Bit0 WLAN-Block, Bit1 BT-Block |
+            | 1 | 32 | SSID, verschlüsselt |
+            | 33 | 64 | Passwort, verschlüsselt |
+            | 97 | 1 | Verschlüsselungsmodus |
+            | 98 | 4 | `sppMaxDataLength`, nur im BT-Block |
+
+            **Das deckt sich Byte für Byte mit unserer eigenen Messung**
+            (`03` + 96 Nullbytes + `03ef010000`): Flags `0x03` = beide Blöcke
+            vorhanden, Modus `0x03`, `sppMaxDataLength` = 495. Dass SSID und
+            Passwort null waren, ist selbst ein Befund — wir haben als
+            **ungekoppelter** Client gelesen.
+
+            **Die Zugangsdaten sind auf dem BLE-Draht verschlüsselt**, über eine
+            native Bibliothek mit eigenem Schlüsselaustausch beim Pairing. Der
+            Algorithmus liegt nicht im Bytecode. **Wir brauchen ihn nicht:** die
+            Zugangsdaten stehen im Kameramenü, und über PTP gibt es sie im
+            Klartext (unten).
+
+            **Pflicht-Abonnements vor dem Handshake:** nur `0x2000` (Indication)
+            und `0x2008` (Notification, bis zu 50 Versuche mit 100 ms Abstand).
+            Die weiteren, die die App behandelt — `0x200A`, `0x2081`, `0x2020`,
+            `0x2021` — sind optional und **existieren an dieser Kamera nicht**.
+            Unser Client abonniert damit bereits das Richtige.
+
+            **Jeder Schreibzugriff ist synchron**: die App wartet auf die
+            Bestätigung, bevor der nächste folgt, und pausiert vorher. Einen
+            expliziten Write-Typ setzt sie nie — er folgt den Properties aus der
+            Discovery. `0x2005` hat `0x0a`, also *write with response*.
+
+            **Aus dem PTP-Teil derselben App:**
+            - Port **15740** steht als `0x3d7c` fest im Verbindungsaufbau
+            - Initiator-GUID **`00112233-4455-6677-8899-AABBCCDDEEFF`**,
+              Gerätename `Android Device`, Timeout 300 s
+            - **SSID und Passwort sind auch über PTP lesbar und setzbar**
+              (`Get`/`SetWmaSettingAction`, WMA = Wireless Mobile Adapter) —
+              der Weg an der BLE-Verschlüsselung vorbei
+            - Die Kamera-IP wird **nicht geraten**: die App liest die
+              DHCP-Server-Adresse des vergebenen Lease. Die Kamera ist der
+              DHCP-Server ihres eigenen Netzes.
+
+            **Sechs Characteristics unserer Kamera kennt die App nicht:**
+            `0x2082`, `0x2083`, `0x2084`, `0x2086`, `0x2087` — Volltextsuche
+            über alle 11.721 Dateien, null Treffer. Kein Mitschnitt wird sie je
+            zeigen, weil die App sie nie anfasst.
+Folge:      Der Widerlegt-Eintrag zu `0x2005` wird korrigiert (unten) — die
+            Annahme war richtig, die Deutung des Rückgabewerts falsch.
+            Nächster Schritt: `0x01` als **gekoppelter** Client schreiben.
 
 ### 23.08.2026, 00:05 — `operations_supported` gemessen: Live View ist da
 Kommando:   `PtpUsbConnection.open(product=0x0234)` → `get_device_info()`
@@ -728,4 +811,4 @@ Was wir ausgeschlossen haben — damit es niemand erneut versucht.
 | Datum | Annahme | Womit widerlegt |
 |---|---|---|
 | 22.08.2026 | Der HCI-Snoop-Schalter in den Entwickleroptionen liefert auf diesem Handy einen brauchbaren Mitschnitt | Aufzeichnung war aktiv (`dumpsys bluetooth_manager` → `sSnoopLogSettingAtEnable = FULL`), der Bugreport enthält 310 btsnoop-Dateien unter `FS/data/misc/bluetooth/logs/bthci/CsLog_*/BT_HCI_*.cfa` — **alle exakt 16 Byte, also nur Header ohne ein einziges Paket.** Der Hersteller filtert über `INIT_gd_hal_snoop_logger_filtering=true`. Beide Wege, das abzuschalten, sind ohne Root gesperrt: `device_config put` scheitert mit `SecurityException: must add flag to the allowlist`, `setprop persist.bluetooth.btsnoopenable` mit `Failed to set property`. |
-| 22.08.2026 | `01` auf `0x2005` startet den Access Point | Nach vollständiger Authentifizierung geschrieben, Kamera meldet Erfolg, Wert bleibt danach `03`, kein AP erscheint. Der Schreibzugriff wird angenommen, bewirkt aber nichts. |
+| 22.08.2026 | ~~`01` auf `0x2005` startet den Access Point~~ **Diese Widerlegung war selbst falsch — am 23.08. zurückgenommen.** | Beobachtung damals: nach der Authentifizierung geschrieben, Kamera meldet Erfolg, Wert bleibt `03`, kein AP. **Fehler war die Deutung von `03`:** Das ist kein Ruhewert, sondern derselbe Bitfeld-Wert beim *Lesen* — Bit0 und Bit1 gesetzt heißt „WLAN und Bluetooth aktiv". Wir haben eine Statusmeldung für einen unveränderten Befehlswert gehalten. Der Herstellercode zeigt: `0x01` **ist** der WLAN-Auslöser. Warum es damals wirkungslos blieb, ist offen; wahrscheinlichster Grund ist, dass zu diesem Zeitpunkt noch keine Kopplung bestand — zur selben Zeit lieferte `0x2004` leere Zugangsdaten. |

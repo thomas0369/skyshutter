@@ -54,6 +54,33 @@ Die GUID geht als 16 rohe Bytes über die Leitung. `skyshutter` verwendet die
 RFC-4122-Byte-Reihenfolge, sodass die String-Darstellung genau der Hex-Folge im
 Wireshark-Mitschnitt entspricht.
 
+**Die GUID der Hersteller-App ist bekannt** (23.08.2026, aus dem dekompilierten
+Verbindungsaufbau):
+
+```
+GUID          00112233-4455-6677-8899-AABBCCDDEEFF
+Name          "Android Device"
+Port          15740   (steht dort als 0x3d7c)
+Timeout       300 s
+```
+
+Sie ist offensichtlich ein Platzhalter und über alle Installationen gleich —
+die Kamera unterscheidet ihre Clients also nicht über die GUID. Falls ein
+Verbindungsaufbau mit einer eigenen GUID scheitert, ist diese der erste
+Gegentest. Sie kursierte im dslrdashboard-Forum ohne Herkunftsangabe; jetzt ist
+klar, woher sie stammt.
+
+**SSID und Passphrase des Kamera-APs sind auch über PTP erreichbar** —
+`GetWmaSetting` / `SetWmaSetting` (WMA = Wireless Mobile Adapter) lesen und
+**setzen** sie über Device-Properties. Das ist der Weg an der
+BLE-Verschlüsselung vorbei: Über Bluetooth liegen sie chiffriert in `0x2004`,
+über PTP im Klartext.
+
+**Die Kamera-IP wird nicht geraten.** Die App liest die DHCP-Server-Adresse des
+Lease, den sie im Kameranetz bekommt — die Kamera ist der DHCP-Server ihres
+eigenen APs. `discovery.py` sollte denselben Weg gehen, statt eine Liste
+wahrscheinlicher Adressen durchzuprobieren.
+
 ## Nikon-Vendor-Opcodes
 
 Reverse-engineert, nicht von Nikon veröffentlicht; Werte aus `libgphoto2`:
