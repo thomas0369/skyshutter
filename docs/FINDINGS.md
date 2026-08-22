@@ -15,10 +15,10 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | | |
 |---|---|
 | **Phase** | 1 — Ist es PTP/IP? |
-| **Erreicht** | **Kopplung reproduzierbar** — skyshutter steht in der Geräteliste der Kamera, Ablauf in [pairing.md](pairing.md) |
-| **Offenes Gate** | Nach dem Bonding bleibt die Kamera bei „Establishing connection" stehen |
-| **Fehlende Messung** | Zu welchem Dienst die Kamera sich nach dem Bonding verbinden will — RFCOMM/Serial Port wird angeboten und nicht angenommen |
-| **Nächster Schritt** | Herausfinden, was die Kamera nach dem Bond erwartet; danach `0x2005`/`0x2008` als gekoppelter Client |
+| **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
+| **Offenes Gate** | Was löst den WLAN-AP aus? Die Kopplung steht, der Datenpfad noch nicht |
+| **Fehlende Messung** | Welche Bytes auf `0x2002`/`0x2007`/`0x2083` den AP starten; ob `0x2008` als gekoppelter Client den Auslöser bedient |
+| **Nächster Schritt** | Als gekoppelter Client verbinden und `0x2008` (Auslöser) testen, dann den AP-Start suchen |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-22 |
 
@@ -71,6 +71,56 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026, 21:56 — Kopplung in 40 Sekunden, erster Versuch, nach langer Funkpause
+Kommando:   In Etappen von Hand, sonst identisch mit `tools/pair.sh`:
+            Funk `Off`/`On`, 12 s, `ble-probe.py pairing --quick --register skyshutter`,
+            direkt danach `classic-pair.py --seconds 45 pair`.
+Aufbau:     Kamera frisch im Menü *Mit Smartgerät verbinden*, auf beiden Seiten
+            ungekoppelt. Letzter Funkverkehr sechs Stunden zuvor.
+Ergebnis:   Der bisher schnellste und einzige völlig glatte Durchlauf:
+            ```
+            21:56:25  Funk-Reset fertig
+            21:56:50  connected  mtu=515
+            21:56:51  salt #0 -> authenticated, registriert als 'skyshutter'
+                      Kennung: device=DDDDDDDD nonce=NNNNNNNN
+            21:56:59  inquiry: 'P1100_SSSSSSSS' unpaired class=0x080620
+            21:57:01  *** code 034488 ***
+            21:57:05  result: PAIRED  (custom 1/3)
+            ```
+            **40 Sekunden vom Reset bis zum Bond.** Der Abstand zwischen dem
+            Ende des Handshakes und dem Fund im Inquiry betrug **9 Sekunden**,
+            nicht die zuvor als ausreichend dokumentierten 35.
+
+            Kontrolle danach: `classic-pair.py list` (ungepaarter Selektor)
+            findet die Kamera **nicht** mehr — sie ist auf die gepaarte Seite
+            gewechselt. Thomas meldet den Vorgang an der Kamera als erfolgreich.
+
+            **Was diesen Lauf von der Fehlschlagserie 14:12–15:39 unterscheidet,
+            ist nicht der Ablauf.** Die Schritte, die Zeiten und der Code waren
+            dieselben; in jener Serie scheiterte das Bonding neunmal mit
+            `AUTHENTICATION_TIMEOUT`, und auch Windows' eigene Routine gab
+            `FAILED` zurück. Der einzige messbare Unterschied ist die
+            **sechsstündige Ruhephase** davor. Das stützt die Erschöpfungs-These
+            aus [pairing.md](pairing.md), Fallen 5a/5b — beweist sie aber nicht,
+            weil in der Pause weder Kamera noch Windows kontrolliert wurden.
+            **Vermutung, nicht Messung.**
+
+            **Der abschließende Reconnect-Handshake ist kein Pflichtschritt.**
+            Er lief 20 s nach dem Bond los und scheiterte:
+            ```
+            connect 1/15 to 66:09:D2:33:57:34: TimeoutError
+            connect 2/15: unusable (mtu=23)
+            ...
+            camera not advertising - open the smart-device menu on the camera
+            ```
+            Die Kamera advertisierte nicht mehr — **weil die Verbindung bereits
+            stand**. Der Vorgang war an der Kamera trotzdem erfolgreich. Schritt 3
+            ist damit eine Reparatur für den Fall, dass die Kamera nach dem Bond
+            auf „Establishing connection" hängenbleibt, nicht Teil des Normalwegs.
+Folge:      `docs/pairing.md`: Zeitfenster korrigiert, Schritt 3 als bedingt
+            gekennzeichnet, Ruhephase als Bedingung aufgenommen.
+            `tools/pair.sh`: Schritt 3 nur noch bei Bedarf.
 
 ### 22.08.2026 — Kopplung reproduzierbar; der Bluetooth-Stack braucht davor einen Reset
 Kommando:   Der vollständige Ablauf steht in [pairing.md](pairing.md).

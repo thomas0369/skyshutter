@@ -1,6 +1,6 @@
 # Kopplung mit der Kamera — der vollständige Ablauf
 
-Stand 22.08.2026, zweimal erfolgreich durchlaufen. Alles hier ist gemessen;
+Stand 22.08.2026, fünfmal erfolgreich durchlaufen. Alles hier ist gemessen;
 Vermutungen sind als solche gekennzeichnet.
 
 Die Kopplung besteht aus **zwei Hälften**, und beide sind nötig. Wer nur die
@@ -14,14 +14,19 @@ Kamera-Menü öffnen und offen lassen
 [1] BLE: vier Handshake-Stufen auf 0x2000
       │   Clientname (32 B) auf 0x2002, dann trennen
       ▼
-[2] Klassischer Inquiry, Gerät über den Namen finden
+[2] Klassischer Inquiry, Gerät über die Geräteklasse finden
       │   Bonding, Zahlencode an der Kamera mit OK bestätigen
       ▼
-[3] Reconnect-Handshake mit der eben vergebenen Kennung
-      │
-      ▼
    „Your camera and smart device are connected!"
+
+[3] Reconnect-Handshake — nur, wenn die Kamera stattdessen auf
+    „Establishing connection" hängenbleibt. Im Normalfall überflüssig.
 ```
+
+**Schritt 3 gehört nicht zum Normalweg.** Am 22.08. um 21:57 lief er ins Leere
+(`camera not advertising`) — genau deshalb, weil die Kamera zu diesem Zeitpunkt
+schon verbunden war. Er ist die Reparatur für den Fall, dass zwischen Bond und
+Bestätigung zu viel Zeit vergangen ist.
 
 Schlägt Schritt 2 fehl, weil der Inquiry nichts findet: Bluetooth aus- und
 einschalten, 12 s warten, alles wiederholen. Das Skript macht das selbst.
@@ -34,23 +39,36 @@ einschalten, 12 s warten, alles wiederholen. Das Skript macht das selbst.
 bash tools/pair.sh
 ```
 
-Drei Ansagen kommen dabei, und alle drei sind nötig:
+Zwei Ansagen kommen dabei, und beide sind nötig:
 
 1. **Menü öffnen** — nach dem Reset, für den Handshake
 2. **Auf die Kamera schauen** — beim Code sofort OK drücken, das Fenster ist
    rund 30 Sekunden
-3. **Menü erneut öffnen** — nach dem Bestätigen verlässt die Kamera den
-   Advertising-Modus, und der abschließende Reconnect braucht ihn wieder
 
-Ohne die dritte Ansage läuft Schritt 3 zwei Minuten ins Leere, und die Kamera
-bleibt auf „could not connect" stehen.
+Meldet die Kamera danach „connected", ist der Vorgang fertig. Bleibt sie auf
+„Establishing connection" stehen, das Menü erneut öffnen und den Reconnect
+nachschieben — der Ablauf gibt das Kommando mit der vergebenen Kennung aus.
 
 ### Zeitbedarf
 
-Gemessen am 22.08.2026: Sobald die Kamera erreichbar ist, dauert der ganze
-Vorgang **16 Sekunden** — Handshake 3 s, Kamera im Inquiry gefunden nach 1 s,
-Code bis `PAIRED` 12 s. Alles darüber hinaus ist Warten darauf, dass jemand am
-Gerät steht.
+Gemessen am 22.08.2026, 21:56 — der bisher glatteste Durchlauf:
+
+```
+21:56:25  Funk-Reset fertig
+21:56:50  BLE verbunden, mtu=515          (+25 s)
+21:56:51  authentifiziert, registriert     (+ 1 s)
+21:56:59  im Inquiry gefunden              (+ 8 s)
+21:57:01  Zahlencode erscheint             (+ 2 s)
+21:57:05  PAIRED                           (+ 4 s)
+```
+
+**40 Sekunden vom Reset bis zum Bond.** Der Löwenanteil ist der Funk-Hochlauf
+nach dem Reset; der eigentliche Vorgang dauert 15 Sekunden. Alles darüber
+hinaus ist Warten darauf, dass jemand am Gerät steht.
+
+**Kurz halten.** Der Abstand zwischen Handshake und Inquiry betrug hier
+9 Sekunden. Die früher notierten 35 Sekunden funktionierten auch, sind aber
+kein Ziel — die Kamera verlässt den Kopplungsmodus von selbst.
 
 ## Die fünf Fallen
 
@@ -87,6 +105,16 @@ eigenen API-Aufrufe — daran erkennt man, dass es nicht am Client liegt.
 **Abhilfe: die Kamera aus- und wieder einschalten.** Danach lief das Bonding
 beim ersten Versuch, Code nach einer Sekunde. Vorher hatten wir stundenlang
 Windows zurückgesetzt und die Kamera nie.
+
+**Der Aus-/Einschalter half aber nicht immer.** Am Nachmittag des 22.08.
+scheiterten zwischen 14:12 und 15:39 neun Bonding-Versuche in Folge mit
+`AUTHENTICATION_TIMEOUT`, auch nach Kamera-Neustart, auch mit Windows' eigener
+Routine. Derselbe Ablauf lief um 21:56 beim ersten Versuch glatt durch. Der
+einzige messbare Unterschied: **sechs Stunden Funkruhe dazwischen.**
+
+Praktisch heißt das: Wenn zwei, drei Versuche hintereinander scheitern, hört
+auf. Weitermachen verschlimmert es, und die Ursache liegt nicht im Ablauf.
+*(Vermutung — was in der Ruhephase geschieht, wurde nicht gemessen.)*
 
 **5b. Der Windows-Bluetooth-Stack verschluckt sich.** Nach mehreren
 Verbindungs- und Watcher-Zyklen findet der Inquiry **nichts mehr** — auch
