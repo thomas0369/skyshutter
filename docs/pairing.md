@@ -106,6 +106,22 @@ erst in den Kopplungsmodus:
 An der Kamera den Eintrag `skyshutter` aus der Liste der gekoppelten Geräte
 löschen.
 
+## Was die Kamera über klassisches Bluetooth anbietet
+
+Gemessen am 22.08.2026 mit `classic-pair.py services`. Sie hat genau **einen**
+RFCOMM-Dienst:
+
+```
+0x0100  Servicename:  "MFi Bluetooth"
+0x0001  Service-UUID: 00000000-deca-fade-deca-deafdecacaff
+0x0004  L2CAP -> RFCOMM, Kanal 1
+class_of_device = 0x080620   (Imaging / Kamera)
+```
+
+Das ist Apples iAP-Zubehörkanal — für iPhones. **Für alles andere bietet die
+Kamera über klassisches Bluetooth nichts an.** Sie ist auf dieser Seite also
+kein Server, zu dem man sich verbinden könnte; sie will selbst verbinden.
+
 ## Was danach offen ist
 
 Nach dem Bonding zeigt die Kamera **„Establishing connection"** und wartet.

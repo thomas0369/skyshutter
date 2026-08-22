@@ -35,6 +35,7 @@ try:
         DevicePairingResultStatus,
         DeviceUnpairingResultStatus,
     )
+    from winrt.windows.storage.streams import DataReader
 except ImportError:  # pragma: no cover - bench tool
     sys.exit("needs the Windows Python with the winrt packages")
 
@@ -142,6 +143,36 @@ async def cmd_pair(args) -> None:
         log("  -> not bonded")
 
 
+async def cmd_services(args) -> None:
+    """Ask the camera what it offers over classic Bluetooth.
+
+    After bonding it says "establishing connection" and waits. Either it wants
+    to reach a service on our side, or it expects us to reach one on its side.
+    This answers which, by reading its SDP records.
+    """
+    devices = await discover(args.prefix, args.seconds, paired=True)
+    targets = [d for d in devices if d.name.startswith(args.prefix)]
+    if not targets:
+        sys.exit(f"no paired device named {args.prefix}*")
+
+    device = await BluetoothDevice.from_id_async(targets[0].id)
+    if device is None:
+        sys.exit("could not open the device")
+    log(f"{device.name}  class=0x{device.class_of_device.raw_value:06x}")
+
+    result = await device.get_rfcomm_services_async()
+    log(f"{len(result.services)} RFCOMM service(s)")
+    for service in result.services:
+        log(f"  {service.service_id.as_string()}")
+        attributes = await service.get_sdp_raw_attributes_async()
+        for key in sorted(attributes):
+            raw = bytes(DataReader.from_buffer(attributes[key]).read_buffer(
+                attributes[key].length
+            ))
+            text = "".join(chr(c) if 32 <= c < 127 else "." for c in raw)
+            log(f"      0x{key:04x}  {raw.hex()}  |{text}|")
+
+
 async def cmd_forget(args) -> None:
     # Look at paired devices here -- the unpaired selector cannot see a bond
     # that already exists, which is the whole point of forgetting it.
@@ -160,6 +191,9 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="show classic devices in range").set_defaults(run=cmd_list)
     sub.add_parser("pair", help="bond with the camera").set_defaults(run=cmd_pair)
+    sub.add_parser("services", help="list the camera's own services").set_defaults(
+        run=cmd_services
+    )
     sub.add_parser("forget", help="drop an existing bond").set_defaults(run=cmd_forget)
     args = parser.parse_args()
     asyncio.run(args.run(args))
