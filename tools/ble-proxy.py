@@ -178,6 +178,58 @@ class Proxy:
         #: Set while we run our own handshake, so its answers do not get
         #: forwarded to an app that is not there yet.
         self.pending: asyncio.Future | None = None
+        #: Answer the app's handshake ourselves instead of passing it on. The
+        #: camera takes one handshake per connection, and ours is what keeps
+        #: the link alive -- so the app's second one has to be served locally.
+        self.answer_handshake = False
+        #: What the camera answered in stage 4, reused verbatim for the app.
+        self.stage_four: bytes | None = None
+        self.app_stage1: object | None = None
+        self.app_salt = 0
+        self.app_stage2: object | None = None
+
+    def serve_handshake(self, payload: bytes) -> None:
+        """Play the camera for the app's handshake, using the real stage 4."""
+        if len(payload) != np.MESSAGE_LENGTH:
+            log(f"  ! handshake message has {len(payload)} bytes, expected 17")
+            return
+        message = np.Message.decode(payload)
+        if message.stage == 0x01:
+            self.app_stage1 = message
+            self.app_salt = int.from_bytes(os.urandom(1), "big") % len(np.SALTS)
+            stamp = os.urandom(8)
+            probe = np.Message(0x02, stamp, bytes(4), bytes(4))
+            salt_a, salt_b = np.SALTS[self.app_salt]
+            cam_lo, cam_hi = probe.halves
+            our_lo, our_hi = message.halves
+            left, right = np.blowfish_hash([salt_a, salt_b, cam_lo, cam_hi, our_lo, our_hi])
+            self.app_stage2 = np.Message(
+                0x02, stamp, left.to_bytes(4, "big"), right.to_bytes(4, "big")
+            )
+            log(f"  answering the app's stage 1 ourselves, salt #{self.app_salt}")
+            self.push_local(0x2000, self.app_stage2.encode())
+        elif message.stage == 0x03:
+            if self.app_stage1 is None or self.stage_four is None:
+                log("  ! cannot answer stage 3 -- no stage 1 or no camera stage 4 on file")
+                return
+            expected = np.stage_three_for_salt(self.app_stage1, self.app_stage2, self.app_salt)
+            ok = message.device + message.nonce == expected.device + expected.nonce
+            log(f"  app's stage 3 is {'correct' if ok else 'WRONG'}; sending the camera's stage 4")
+            self.push_local(0x2000, self.stage_four)
+        else:
+            log(f"  ! unexpected stage 0x{message.stage:02x} from the app")
+
+    def push_local(self, uuid16: int, payload: bytes) -> None:
+        """Send a value to the app without asking the camera."""
+        char = self.locals.get(uuid16)
+        if char is None or not char.subscribed_clients:
+            log("  (no subscriber, cannot answer)")
+            return
+        try:
+            block(char.notify_value_async(from_bytes(payload)))
+            log(f"  -> {hexdump(payload)}")
+        except Exception as exc:
+            log(f"  ! answering failed: {type(exc).__name__}: {exc}")
 
     async def authenticate(self, device: bytes, nonce: bytes) -> bool:
         """Hold the link by doing what the camera waits for.
@@ -201,7 +253,12 @@ class Proxy:
         final = await self.exchange(stage3.encode())
         if final is None:
             return False
+        # Keep the camera's own stage 4 -- it carries the internal serial, and
+        # the app checks it. Guessing it from the printed number does not work.
+        self.stage_four = final
+        self.answer_handshake = True
         log(f"authenticated with the camera (salt #{salt}); the link will stay up")
+        log("  the app's handshake will be answered here, with the camera's stage 4")
         return True
 
     async def exchange(self, payload: bytes, timeout: float = 6.0) -> bytes | None:
@@ -235,6 +292,9 @@ class Proxy:
         mark = "  <<< CANDIDATE" if uuid16 in INTERESTING else ""
         log(f"WRITE {label(uuid16)}{mark}")
         log(f"      {hexdump(payload)}")
+        if uuid16 == 0x2000 and self.answer_handshake:
+            self.serve_handshake(payload)
+            return
         try:
             self.call(
                 self.camera.write_gatt_char(self.char_uuid(uuid16), payload, response=True)
@@ -247,6 +307,10 @@ class Proxy:
         log(f"NOTIFY {label(uuid16)}  {hexdump(payload)}")
         if uuid16 == 0x2000 and self.pending is not None and not self.pending.done():
             self.pending.set_result(payload)
+            return
+        if uuid16 == 0x2000 and self.answer_handshake:
+            # We serve that channel ourselves; anything the camera says on it
+            # now belongs to our own session, not to the app's.
             return
         char = self.locals.get(uuid16)
         if char is None:
@@ -270,11 +334,11 @@ async def main() -> int:
     parser.add_argument("--retries", type=int, default=40)
     parser.add_argument("--timeout", type=float, default=6.0)
     parser.add_argument("--transcript", default=None)
-    # Measured 22.08.2026: authenticating here makes the camera reject the
-    # app's own handshake with error 0x80 -- it takes one per connection. The
-    # keepalive reads hold the link on their own, so leave this alone unless
-    # something else needs the proxy to be a paired client.
-    parser.add_argument("--device", help="authenticate as this identity; blocks the app")
+    # Measured 22.08.2026: the camera takes one handshake per connection. Ours
+    # is what keeps the link alive once the camera is paired with a phone, so
+    # the app's handshake cannot go through -- it gets answered locally
+    # instead, with the camera's own stage 4.
+    parser.add_argument("--device", help="our paired identity, hex; keeps the link alive")
     parser.add_argument("--nonce", help="the nonce that goes with it, hex")
     parser.add_argument(
         "--keepalive",
@@ -296,8 +360,9 @@ async def main() -> int:
     # happen before anything else -- otherwise the app arrives to find a proxy
     # whose upstream is already gone.
     if args.device and args.nonce:
-        log("! authenticating: the app's own handshake will be refused with 0x80")
         await proxy.authenticate(bytes.fromhex(args.device), bytes.fromhex(args.nonce))
+    else:
+        log("no identity given: a paired camera drops an unauthenticated client after ~30 s")
 
     # Mirror the camera's own layout rather than a hardcoded table: whatever it
     # offers is what the app gets to see.
@@ -381,8 +446,10 @@ async def main() -> int:
                 continue
             try:
                 await proxy.camera.read_gatt_char(Proxy.char_uuid(0x2006))
-            except Exception:
-                pass
+            except Exception as exc:
+                # Silence here cost an evening: when the keepalive fails the
+                # link dies eight seconds later and nothing says why.
+                log(f"  keepalive read failed: {type(exc).__name__}: {str(exc)[:60]}")
 
     task = asyncio.create_task(keepalive()) if args.keepalive else None
 

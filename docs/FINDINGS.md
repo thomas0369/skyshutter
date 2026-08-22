@@ -18,7 +18,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
 | **Offenes Gate** | Was löst den WLAN-AP aus? Am Kameramenü geht es nicht (Herstellerdoku), also über BLE |
 | **Fehlende Messung** | Der Schreibzugriff der Hersteller-App, der den AP startet — Kandidaten `0x2004`, `0x2007`, `0x2082`, `0x2083`, `0x2087` |
-| **Nächster Schritt** | Proxy ohne `--device` starten, in der App die **Fernaufnahme** wählen (nicht koppeln — dabei findet sie uns nicht) und den Schreibzugriff mitlesen |
+| **Nächster Schritt** | Hybrid-Proxy an Hardware testen: Funk-Reset, Kameramenü, `ble-proxy.py --device … --nonce …`, dann Handy-Bluetooth an und in der App **Fernaufnahme** (nicht koppeln — dabei findet die App uns nicht) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-22 |
 
@@ -71,6 +71,39 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026, 23:28 — Eine gekoppelte Kamera duldet keinen fremden Client
+Kommando:   `tools/ble-proxy.py --keepalive 2` (ohne Identität)
+Aufbau:     Wie unten, aber die Kamera ist inzwischen mit dem Handy gekoppelt.
+Ergebnis:   ```
+            23:28:15  camera connected, mtu=515
+            23:28:42  ! the camera dropped the link
+            ```
+            **27 Sekunden, obwohl der Keepalive fehlerfrei lief** — keine
+            einzige `keepalive read failed`-Meldung. Vor der Kopplung hielt
+            dieselbe Verbindung über vier Minuten. Eine gekoppelte Kamera wirft
+            einen nicht authentifizierten Client also raus, auch wenn er redet.
+
+            Damit steht der Proxy in einer Zwickmühle:
+
+            | Betrieb | Folge |
+            |---|---|
+            | ohne eigenen Handshake | die gekoppelte Kamera trennt nach ~30 s |
+            | mit eigenem Handshake | die App wird mit `0x80` abgewiesen |
+
+            **Der Ausweg ist ein Hybrid:** bei der Kamera authentifizieren, den
+            Handshake der App aber selbst beantworten — mit der **echten
+            Stufe 4 der Kamera**, die wir dabei mitschneiden. Alles andere geht
+            weiter durch. In `ble-proxy.py` gebaut, **noch nicht an Hardware
+            getestet**.
+
+            **Nebenbefund, widerspricht Falle 2 aus [pairing.md](pairing.md):**
+            Ein Scan um 23:35 zeigte die Kamera mit ihrem **vollen** Namen
+            `P1100_SSSSSSSS` im Advertising, nicht mit dem abgeschnittenen
+            `P110`. Wann sie welchen sendet, ist offen.
+Folge:      `--device`/`--nonce` sind jetzt der empfohlene Betrieb, nicht der
+            gemiedene. Der Keepalive protokolliert Fehler, statt sie zu
+            schlucken — sein Schweigen hat einen Abend gekostet.
 
 ### 22.08.2026, 23:12 — Die App spricht durch den Proxy mit der echten Kamera
 Kommando:   `tools/ble-proxy.py --keepalive 2` (ohne `--device`/`--nonce`)
