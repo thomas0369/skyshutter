@@ -15,11 +15,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | | |
 |---|---|
 | **Phase** | 1 — Ist es PTP/IP? |
-| **Offenes Gate** | Antwortet die P1100 im Fernsteuerungsmodus auf TCP 15740? |
-| **Erreicht** | **Vollständige Kopplung** — skyshutter steht in der Geräteliste der Kamera (22.08.2026) |
-| **Fehlende Messung** | Wie ein gekoppelter Client den Fernsteuerungsmodus startet |
-| **Nächster Schritt** | Als gekoppelter Client `0x2005` und `0x2008` erneut prüfen — vorher schlugen sie fehl, weil wir nicht registriert waren |
-| **Unsere Kennung** | `device=01dcca74 nonce=877b17f2` — damit meldet man sich als bekannter Client an |
+| **Erreicht** | **Kopplung reproduzierbar** — skyshutter steht in der Geräteliste der Kamera, Ablauf in [pairing.md](pairing.md) |
+| **Offenes Gate** | Nach dem Bonding bleibt die Kamera bei „Establishing connection" stehen |
+| **Fehlende Messung** | Zu welchem Dienst die Kamera sich nach dem Bonding verbinden will — RFCOMM/Serial Port wird angeboten und nicht angenommen |
+| **Nächster Schritt** | Herausfinden, was die Kamera nach dem Bond erwartet; danach `0x2005`/`0x2008` als gekoppelter Client |
+| **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-22 |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
@@ -71,6 +71,41 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026 — Kopplung reproduzierbar; der Bluetooth-Stack braucht davor einen Reset
+Kommando:   Der vollständige Ablauf steht in [pairing.md](pairing.md).
+Ergebnis:   Zweiter erfolgreicher Bond, diesmal **beim ersten Versuch**, nachdem
+            der Funk vorher aus- und eingeschaltet wurde:
+            ```
+            0. Bluetooth Off -> On, 15 s warten
+            1. BLE-Handshake, salt #5, registriert als 'skyshutter'
+            2. inquiry: 'P1100_SSSSSSSS' unpaired  <-- gefunden
+               *** code 018564 -- OK an der Kamera ***
+               result: PAIRED
+            ```
+            **Der Reset ist keine Vorsichtsmaßnahme, er ist notwendig.** Ohne
+            ihn scheiterten fünf Anläufe nacheinander: Der klassische Inquiry
+            meldete **null Geräte** — nicht einmal einen Fernseher, der
+            durchgehend in Reichweite war und Minuten zuvor noch gefunden
+            wurde. Nach `Off`/`On` und ~15 s Wartezeit fand derselbe Code
+            sofort wieder alles. Der Windows-Stack verschluckt sich nach
+            mehreren Verbindungs- und Watcher-Zyklen.
+
+            **Irrweg, damit ihn niemand wiederholt:** Der Verdacht, ein
+            einzelner `DeviceWatcher` mache nur eine Suchrunde und müsse
+            wiederholt neu gestartet werden, war falsch. Das Umbauen auf
+            Runden machte es schlimmer — dann fand er gar nichts mehr, weil
+            Windows `EnumerationCompleted` schon nach einer Sekunde meldet,
+            lange bevor der Funk tatsächlich gesucht hat. Ein Watcher, der
+            das ganze Fenster durchläuft, ist richtig.
+
+            **Nach dem Bond bleibt die Kamera bei „Establishing connection"
+            stehen**, auch wenn ein RFCOMM-Dienst (Serial Port,
+            `00001101-…`) angeboten wird und das Bonding erfolgreich war.
+            Sie baut keine Verbindung zu diesem Dienst auf. Was sie
+            stattdessen erwartet, ist offen.
+Folge:      `docs/pairing.md` neu — der Ablauf als Kommandoblock.
+            `tools/classic-pair.py` behält den einfachen Watcher.
 
 ### 22.08.2026 — Vollständige Kopplung: skyshutter steht in der Geräteliste der Kamera
 Kommando:   `tools/ble-probe.py pairing --register skyshutter` (ohne `--device`/`--nonce`!),

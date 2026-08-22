@@ -72,6 +72,9 @@ async def discover(prefix: str, seconds: float, paired: bool = False) -> list:
     def on_completed(sender, _args):
         log("  inquiry round finished")
 
+    # One watcher, left running for the whole window. Restarting it per round
+    # was an experiment that made things worse: it then found nothing at all,
+    # not even devices that were plainly in range.
     watcher.add_added(on_added)
     watcher.add_enumeration_completed(on_completed)
     watcher.start()
@@ -140,7 +143,9 @@ async def cmd_pair(args) -> None:
 
 
 async def cmd_forget(args) -> None:
-    devices = await discover(args.prefix, args.seconds)
+    # Look at paired devices here -- the unpaired selector cannot see a bond
+    # that already exists, which is the whole point of forgetting it.
+    devices = await discover(args.prefix, args.seconds, paired=True)
     for device in devices:
         if not device.name.startswith(args.prefix):
             continue

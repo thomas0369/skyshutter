@@ -8,6 +8,7 @@ Python, stdlib-only, PTP/IP über TCP 15740.
 1. `docs/FINDINGS.md` — **Stand-Block**: welche Phase, welches Gate, welche Messung fehlt.
 2. `docs/playbook.md` — wie hier gearbeitet wird (Kern-Loop, Sicherheitsregeln).
 3. `docs/plan.md` — der Phasenplan mit Gates.
+4. `docs/pairing.md` — wie die Kopplung läuft und welche fünf Fallen sie hat.
 
 MEMEX-Recall zu „skyshutter P1100": #17934 (Recherche), #17935 (Projektstand).
 

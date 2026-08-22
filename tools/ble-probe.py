@@ -457,9 +457,11 @@ async def _pairing_once(args) -> None:
 
         # Read everything again: authentication may unlock values that read as
         # zero before, and comparing the two states is the cheapest way to see
-        # what the handshake actually bought us.
-        print("\n  --- values after authenticating ---")
-        for service in client.services:
+        # what the handshake actually bought us. It costs about twenty seconds
+        # though, and the camera only stays open for classic bonding briefly
+        # after the handshake -- so --quick skips it.
+        print("\n  --- values after authenticating ---" if not args.quick else "", end="")
+        for service in [] if args.quick else client.services:
             for char in service.characteristics:
                 if "read" not in char.properties:
                     continue
@@ -563,6 +565,9 @@ def main() -> None:
     )
     pairing.add_argument(
         "--sweep", action="store_true", help="try each plausible value on 0x2005"
+    )
+    pairing.add_argument(
+        "--quick", action="store_true", help="skip the value dump; leaves time for bonding"
     )
     pairing.add_argument("--device", help="reconnect with a known client id (hex)")
     pairing.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
