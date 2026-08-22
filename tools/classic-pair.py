@@ -189,13 +189,21 @@ async def cmd_pair(args) -> None:
         | DevicePairingKinds.CONFIRM_PIN_MATCH
         | DevicePairingKinds.PROVIDE_PIN
     )
-    result = await custom.pair_async(kinds)
-    status = result.status
-    log(f"result: {DevicePairingResultStatus(status).name}")
-    if status == DevicePairingResultStatus.PAIRED:
-        log("  -> bonded; the camera should now list this machine")
-    else:
-        log("  -> not bonded")
+    # The camera answers a bonding request only sometimes. Measured: it either
+    # asks for the code within about three seconds, or it stays silent and
+    # Windows gives up after twenty-odd. Retrying costs nothing -- the device
+    # is already found -- and turns an unreliable step into a reliable one.
+    for attempt in range(1, args.attempts + 1):
+        result = await custom.pair_async(kinds)
+        status = result.status
+        name = DevicePairingResultStatus(status).name
+        log(f"result: {name}  (attempt {attempt}/{args.attempts})")
+        if status == DevicePairingResultStatus.PAIRED:
+            log("  -> bonded; the camera should now list this machine")
+            return
+        if attempt < args.attempts:
+            await asyncio.sleep(2)
+    log("  -> not bonded")
 
 
 async def cmd_services(args) -> None:
@@ -243,6 +251,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--prefix", default=DEFAULT_PREFIX, help="name prefix to look for")
     parser.add_argument("--seconds", type=float, default=30.0, help="how long to sweep")
+    parser.add_argument(
+        "--attempts", type=int, default=3, help="bonding tries; the camera often ignores the first"
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="show classic devices in range").set_defaults(run=cmd_list)
     sub.add_parser("pair", help="bond with the camera").set_defaults(run=cmd_pair)
