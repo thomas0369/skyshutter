@@ -32,7 +32,9 @@ from uuid import UUID
 try:
     import winrt.windows.devices.bluetooth.genericattributeprofile as gatt
     from winrt.windows.devices.bluetooth import BluetoothError
+    from winrt.windows.devices.bluetooth.rfcomm import RfcommServiceId, RfcommServiceProvider
     from winrt.windows.foundation import AsyncStatus
+    from winrt.windows.networking.sockets import SocketProtectionLevel, StreamSocketListener
     from winrt.windows.storage.streams import DataReader, DataWriter
 except ImportError:  # pragma: no cover - bench tool
     sys.exit("needs the Windows Python with the winrt packages (pip install winrt-runtime)")
@@ -48,9 +50,10 @@ WRITE = gatt.GattCharacteristicProperties.WRITE
 NOTIFY = gatt.GattCharacteristicProperties.NOTIFY
 INDICATE = gatt.GattCharacteristicProperties.INDICATE
 
-# What the real camera returned, byte for byte, on 22.08.2026. The serial is a
-# placeholder -- pass --serial to use another one.
-DEFAULT_SERIAL = "SSSSSSSS"
+# What the real camera returned, byte for byte, on 22.08.2026 -- except the
+# serial, which is a placeholder on purpose: the real one identifies the device
+# and this repository is public. Pass --serial and --auth-serial to use it.
+DEFAULT_SERIAL = "00000000"
 
 
 def initial_values(serial: str, name: str) -> dict[int, bytes]:
@@ -116,8 +119,16 @@ NAMES = {
 }
 
 
+#: Everything also goes here, so a long session is not lost to a scrollback.
+TRANSCRIPT: object | None = None
+
+
 def log(message: str) -> None:
-    print(f"{time.strftime('%H:%M:%S')}  {message}", flush=True)
+    line = f"{time.strftime('%H:%M:%S')}  {message}"
+    print(line, flush=True)
+    if TRANSCRIPT is not None:
+        TRANSCRIPT.write(line + "\n")
+        TRANSCRIPT.flush()
 
 
 def hexdump(data: bytes) -> str:
@@ -142,9 +153,14 @@ def clock_bytes() -> bytes:
 class Camera:
     """The state our doppelganger keeps while the app talks to it."""
 
-    def __init__(self, serial: str, name: str) -> None:
+    def __init__(self, serial: str, name: str, auth_serial: bytes | None = None) -> None:
         self.values = initial_values(serial, name)
         self.serial = serial
+        # Stage 4 does not carry the printed serial. The real camera answered
+        # 3230303130325160 -- "200102" followed by two bytes that are not ASCII
+        # at all. The app remembers this value and rejects a camera that gives a
+        # different one, so guessing it from the printed number is not enough.
+        self.auth_serial = auth_serial or serial.encode("ascii").ljust(8, b"\x00")[:8]
         self.stage1: np.Message | None = None
         self.salt = 0
         self.characteristics: dict[int, object] = {}
@@ -212,9 +228,8 @@ class Camera:
         return self._last_stage2
 
     def _stage_four(self) -> np.Message:
-        """Stage 4 carries the serial in the device and nonce fields."""
-        padded = self.serial.encode("ascii").ljust(8, b"\x00")[:8]
-        return np.Message(0x04, bytes(8), padded[:4], padded[4:])
+        """Stage 4 carries the internal serial in the device and nonce fields."""
+        return np.Message(0x04, bytes(8), self.auth_serial[:4], self.auth_serial[4:8])
 
     # --- reads and writes ---------------------------------------------------
 
@@ -237,6 +252,52 @@ class Camera:
             log("  *** CONNECTION_ESTABLISHMENT -- this is the WiFi trigger ***")
         elif uuid16 == 0x2008:
             log("  *** LSS_CONTROL_POINT -- shutter or remote command ***")
+
+
+async def become_findable() -> object | None:
+    """Make this machine findable over *classic* Bluetooth, and listen.
+
+    The BLE half is only the first act. Measured on the real camera: the client
+    then drops the link, runs a classic inquiry and bonds -- and only that bond
+    registers it. A doppelganger that offers BLE alone therefore leaves the app
+    hanging exactly where we hung yesterday.
+
+    Windows is not discoverable on its own; it becomes discoverable while a
+    service asks for it, which is what start_advertising_with_radio_discoverability
+    does. The serial port we put up is also the channel the app may try to open
+    afterwards, so anything it says there lands in the log.
+    """
+    provider = await RfcommServiceProvider.create_async(RfcommServiceId.serial_port)
+    listener = StreamSocketListener()
+    sockets: list = []
+
+    def on_connection(sender, event):
+        sockets.append(event.socket)
+        host = event.socket.information.remote_host_name
+        log(f"*** CLASSIC CONNECT from {host.display_name if host else '?'} ***")
+
+    listener.add_connection_received(on_connection)
+    await listener.bind_service_name_with_protection_level_async(
+        provider.service_id.as_string(), SocketProtectionLevel.PLAIN_SOCKET
+    )
+    provider.start_advertising_with_radio_discoverability(listener, True)
+    log("classic Bluetooth: discoverable, serial port offered")
+    return provider, sockets
+
+
+async def drain(sockets: list) -> None:
+    """Log whatever arrives on a classic connection."""
+    for socket in list(sockets):
+        reader = DataReader(socket.input_stream)
+        reader.input_stream_options = 1  # partial: hand back what is there
+        try:
+            count = await reader.load_async(4096)
+        except Exception as exc:
+            log(f"classic read failed: {type(exc).__name__}: {str(exc)[:70]}")
+            sockets.remove(socket)
+            continue
+        if count:
+            log(f"CLASSIC RECV {hexdump(bytes(reader.read_buffer(count)))}")
 
 
 def block(operation, timeout: float = 2.0):
@@ -272,7 +333,23 @@ async def main() -> int:
         action="store_true",
         help="report this machine's own name in 0x2003 instead of a camera name",
     )
+    parser.add_argument(
+        "--ble-only",
+        action="store_true",
+        help="skip the classic side; the app will then hang after the handshake",
+    )
+    parser.add_argument("--transcript", default=None, help="also write the log to this file")
+    parser.add_argument(
+        "--auth-serial",
+        default=None,
+        metavar="HEX",
+        help="the 8 bytes stage 4 answers with; the real camera's are not all ASCII",
+    )
     args = parser.parse_args()
+
+    if args.transcript:
+        global TRANSCRIPT
+        TRANSCRIPT = open(args.transcript, "a", encoding="utf-8")
     # After the BLE handshake the client drops the link and hunts for a
     # *classic* Bluetooth device whose name matches -- the reference
     # implementation compares it verbatim. Windows takes its Bluetooth name
@@ -283,7 +360,10 @@ async def main() -> int:
     else:
         name = args.name or f"P1100_{args.serial}"
 
-    camera = Camera(args.serial, name)
+    auth_serial = bytes.fromhex(args.auth_serial) if args.auth_serial else None
+    if auth_serial is not None and len(auth_serial) != 8:
+        return "--auth-serial needs exactly 8 bytes (16 hex digits)"
+    camera = Camera(args.serial, name, auth_serial)
 
     result = await gatt.GattServiceProvider.create_async(SERVICE_UUID)
     if result.error != BluetoothError.SUCCESS:
@@ -342,12 +422,25 @@ async def main() -> int:
 
     log(f"advertising {SERVICE_UUID}")
     log(f"reporting as {name!r} in 0x2003")
+
+    rfcomm, sockets = None, []
+    if not args.ble_only:
+        try:
+            rfcomm, sockets = await become_findable()
+        except Exception as exc:
+            log(f"! classic Bluetooth stayed off: {type(exc).__name__}: {exc}")
+            log("  the app will complete the handshake and then hang -- see docs/pairing.md")
+
     log("open the vendor app and look for the camera -- ctrl-c to stop")
     try:
         while True:
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
+            if sockets:
+                await drain(sockets)
     except KeyboardInterrupt:
         provider.stop_advertising()
+        if rfcomm is not None:
+            rfcomm.stop_advertising()
         log("stopped")
     return 0
 

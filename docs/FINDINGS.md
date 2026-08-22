@@ -16,9 +16,9 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 — Ist es PTP/IP? |
 | **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
-| **Offenes Gate** | Was löst den WLAN-AP aus? Die Kopplung steht, der Datenpfad noch nicht |
-| **Fehlende Messung** | Welche Bytes auf `0x2002`/`0x2007`/`0x2083` den AP starten; ob `0x2008` als gekoppelter Client den Auslöser bedient |
-| **Nächster Schritt** | Als gekoppelter Client verbinden und `0x2008` (Auslöser) testen, dann den AP-Start suchen |
+| **Offenes Gate** | Was löst den WLAN-AP aus? Am Kameramenü geht es nicht (Herstellerdoku), also über BLE |
+| **Fehlende Messung** | Der Schreibzugriff der Hersteller-App, der den AP startet — Kandidaten `0x2004`, `0x2007`, `0x2082`, `0x2083`, `0x2087` |
+| **Nächster Schritt** | `tools/ble-proxy.py` zwischen App und Kamera hängen und in der App die Fernaufnahme wählen |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-22 |
 
@@ -71,6 +71,92 @@ Aufbau:     Kameramodus, Netz, welches Interface
 Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
+
+### 22.08.2026, 22:41 — BLE-Proxy zwischen App und Kamera; die Kamera wirft stille Clients raus
+Kommando:   `tools/ble-proxy.py --device DDDDDDDD --nonce NNNNNNNN --keepalive 3`
+Aufbau:     Kamera im Menü *Mit Smartgerät verbinden*. Der Laptop hält
+            gleichzeitig eine BLE-Client-Verbindung zur Kamera (bleak) und einen
+            BLE-GATT-Server für die App (WinRT). **Beide Rollen auf demselben
+            Adapter funktionieren.**
+Ergebnis:   ```
+            22:41:23  camera connected, mtu=515 -- it has stopped advertising
+            22:41:23  authenticated with the camera (salt #0)
+            22:41:23  mirroring 18 characteristics
+            22:41:23  advertising as the camera
+            ```
+            **Die Kamera trennt einen Client, der nichts sagt — nach 8 bis 9
+            Sekunden, auch einen authentifizierten.** Zweimal gemessen
+            (22:31:02 → 22:31:10, 22:37:10 → 22:37:19). Ein Lesezugriff alle
+            drei Sekunden (`0x2006`) hält die Verbindung; danach lief sie über
+            acht Minuten ohne Abbruch. Das erklärt rückwirkend mehrere
+            Fehlschläge, bei denen zwischen zwei Schritten zu viel Zeit verging.
+
+            **Sobald wir verbunden sind, advertisiert die Kamera nicht mehr.**
+            Das ist der Hebel des Proxys: Die App kann sie dann nicht mehr
+            finden und sieht nur uns.
+
+            Der Funk-Reset ist auch hier Vorbedingung: 28 Verbindungsversuche in
+            Folge kamen mit `mtu=23` hoch (unbrauchbar), nach `Off`/`On` sofort
+            `mtu=515` beim ersten Versuch.
+Folge:      Neu `tools/ble-proxy.py`. `--keepalive` ist der Messwert als Code.
+
+### 22.08.2026, 22:15 — Was die Hersteller-App über BLE tut, gegen unseren Doppelgänger
+Kommando:   `tools/ble-camera-sim.py --host-name|--serial … --auth-serial …`
+Aufbau:     Laptop als GATT-Server mit den 18 gemessenen Characteristics, die
+            echte Kamera ausgeschaltet. Die App auf dem Handy verbindet sich
+            damit. Drei Läufe mit unterschiedlichen Werten in `0x2003`.
+Ergebnis:   **Die App beantwortet unsere gerechnete Challenge korrekt** — der
+            Handshake ist damit in beide Richtungen verifiziert. Ihr Ablauf:
+
+            | Schritt | was |
+            |---|---|
+            | abonniert | nur `0x2000` und `0x2008` — die vier indicate-Kanäle nicht |
+            | schreibt `0x2000` | Stufen 1 und 3 |
+            | schreibt `0x2002` | ihren Namen, 32 B ASCII |
+            | liest | `0x2003`, `0x2009` |
+            | schreibt `0x2006` | die Uhr, 10 B — **nur bei akzeptierter Kamera** |
+
+            **Sie führt eine gespeicherte Kennung mit:** `device` und `nonce`
+            waren über alle Läufe hinweg identisch, nur der Zeitstempel wechselte.
+            Ein Löschen der Kamera *in der App* setzte das nicht zurück.
+
+            **Sie prüft den Gerätenamen.** Mit dem Kameranamen in `0x2003` kam
+            sie bis zum Uhrstellen; mit dem Rechnernamen brach sie nach dem
+            Lesen von `0x2003`/`0x2009` ab und begann von vorn — im Sekundentakt.
+
+            **Die interne Seriennummer ist nicht die abgedruckte.** Stufe 4 der
+            echten Kamera endet auf `…30325160`: sechs ASCII-Zeichen, dann zwei
+            Bytes, die keine sind. Der Doppelgänger braucht diesen Wert
+            wörtlich (`--auth-serial`), geraten aus der aufgedruckten Nummer
+            reicht nicht.
+Folge:      Grenze des Doppelgängers benannt: Windows nimmt seinen klassischen
+            Bluetooth-Namen zwingend vom Computernamen, also können BLE-Name und
+            klassischer Name nicht beide stimmen. Deshalb der Proxy.
+
+### 22.08.2026 — Der WLAN-Access-Point lässt sich am Kameramenü nicht starten
+Quelle:     Herstellerdokumentation, Referenzhandbuch dieses Modells,
+            Netzwerkmenü und Abschnitt Drahtlosverbindungen. **Rang: Primär.**
+Ergebnis:   Das Netzwerkmenü hat acht Einträge: Flugzeugmodus, Verbindung
+            auswählen, Mit Smartgerät verbinden, Verbindung zur Fernbedienung,
+            Während der Aufnahme senden, Wi-Fi, Bluetooth, Standardeinstellungen
+            wiederherstellen. Unter **Wi-Fi** stehen genau zwei Punkte:
+            *Netzwerkeinstellungen* (SSID 1–32 Zeichen, Auth: Open /
+            WPA2-PSK-AES / WPA3-SAE / gemischt, Passwort 8–36, Kanal,
+            Subnetzmaske `255.255.255.0`, DHCP-Server-IP `192.168.0.10`) und
+            *Aktuelle Einstellungen* — beides Anzeige und Konfiguration.
+
+            **Ein Punkt, der eine WLAN-Verbindung herstellt, existiert nicht.**
+            Der Hersteller schreibt, der Wechsel geschehe durch Auswahl der
+            Download- oder Fernaufnahme-Funktion *in der App*. Neuere Modelle
+            anderer Baureihen haben den Menüpunkt *Wi-Fi-Verbindung (AP mode)*;
+            dieses Modell hat ihn nicht.
+
+            Gegenprobe am 22.08. um 22:0x: `netsh wlan show networks` findet nur
+            das Heimnetz. Der AP läuft nicht von selbst.
+Folge:      Der WLAN-Start muss über BLE kommen. `0x2005` ist widerlegt (unten),
+            die übrigen Kandidaten sind `0x2004`, `0x2007`, `0x2082`, `0x2083`,
+            `0x2087`. Kein öffentliches Projekt dokumentiert das Kommando —
+            weder furble, noch der ESP32-Aufsatz, noch das dslrdashboard-Forum.
 
 ### 22.08.2026, 21:56 — Kopplung in 40 Sekunden, erster Versuch, nach langer Funkpause
 Kommando:   In Etappen von Hand, sonst identisch mit `tools/pair.sh`:

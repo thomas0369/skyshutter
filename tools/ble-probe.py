@@ -31,7 +31,10 @@ try:
 except ImportError:  # pragma: no cover - bench tool
     sys.exit("bleak is missing: pip install bleak")
 
-DEFAULT_NAME = "P1100_SSSSSSSS"
+# Only a fallback: matching happens on the service UUID, because the advertised
+# name is truncated anyway. The serial is left out on purpose -- it identifies
+# the device and this repository is public.
+DEFAULT_NAME = "P1100"
 AUTH_LENGTH = 17
 VENDOR_SERVICE = "0000de00-3dd4-4255-8d62-6dc7b9bd5561"
 
