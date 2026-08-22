@@ -26,26 +26,31 @@ Kamera-Menü öffnen und offen lassen
 Schlägt Schritt 2 fehl, weil der Inquiry nichts findet: Bluetooth aus- und
 einschalten, 12 s warten, alles wiederholen. Das Skript macht das selbst.
 
-## Der Kommandoblock
+## Der Ablauf
+
+`tools/pair.sh` macht alles und sagt an, wann du am Gerät sein musst:
 
 ```bash
-PY='/mnt/c/Users/thoma/AppData/Local/Programs/Python/Python312/python.exe'
-cd /mnt/c/Users/thoma/AppData/Local/Temp
-
-# 1. BLE-Handshake als UNBEKANNTER Client
-"$PY" -u ble-probe.py --retries 40 --timeout 6 pairing --quick --register skyshutter
-#    Kennung aus der Zeile "remember  device=… nonce=…" merken
-
-# 2. Klassisches Bonding, Code an der Kamera bestaetigen
-"$PY" -u classic-pair.py --seconds 45 pair
-
-# 3. Reconnect schliesst die Kopplung ab
-"$PY" -u ble-probe.py --retries 25 --timeout 6 pairing --quick --device <DEV> --nonce <NONCE>
+bash tools/pair.sh
 ```
 
-Der Reset gehört **nicht** an den Anfang: Er kostet zwölf Sekunden und ist nur
-nötig, wenn der Windows-Stack sich verschluckt hat. Erst versuchen, bei
-Misserfolg zurücksetzen und wiederholen.
+Drei Ansagen kommen dabei, und alle drei sind nötig:
+
+1. **Menü öffnen** — nach dem Reset, für den Handshake
+2. **Auf die Kamera schauen** — beim Code sofort OK drücken, das Fenster ist
+   rund 30 Sekunden
+3. **Menü erneut öffnen** — nach dem Bestätigen verlässt die Kamera den
+   Advertising-Modus, und der abschließende Reconnect braucht ihn wieder
+
+Ohne die dritte Ansage läuft Schritt 3 zwei Minuten ins Leere, und die Kamera
+bleibt auf „could not connect" stehen.
+
+### Zeitbedarf
+
+Gemessen am 22.08.2026: Sobald die Kamera erreichbar ist, dauert der ganze
+Vorgang **16 Sekunden** — Handshake 3 s, Kamera im Inquiry gefunden nach 1 s,
+Code bis `PAIRED` 12 s. Alles darüber hinaus ist Warten darauf, dass jemand am
+Gerät steht.
 
 ## Die fünf Fallen
 
@@ -78,9 +83,15 @@ Geräte nicht, die klar in Reichweite sind. Fünf Fehlversuche in Folge, dann
 nach `Off`/`On` sofort wieder alles gefunden.
 
 **6. Der Inquiry meldet Geräte, bevor ihr Name da ist.** Die Kamera erschien
-mehrfach als `''`. Wer auf den leeren Namen filtert, wirft genau das Gerät weg,
-das er sucht. Namenlose Einträge müssen über `BluetoothDevice.from_id_async`
-nachgeschlagen und `Updated`-Ereignisse ausgewertet werden.
+mehrfach als `''` und mehrfach als `Bluetooth AA:BB:CC:DD:EE:FF` — Windows'
+Platzhalter, wenn die Namensauflösung nicht durchkommt. Wer auf den Namen
+filtert, wirft genau das Gerät weg, das er sucht.
+
+**Zuverlässig ist die Geräteklasse:** `class_of_device == 0x080620`
+(Imaging/Kamera). `classic-pair.py` erkennt die Kamera daran, unabhängig vom
+Namen. Und die dort auftauchende Adresse `AA:BB:CC:DD:EE:FF` ist dieselbe, mit
+der die Hersteller-App im Handy-Log klassisch gekoppelt hat — es ist die
+**klassische** Bluetooth-Adresse der Kamera, eine andere als ihre BLE-Adresse.
 
 ## Zeitfenster
 

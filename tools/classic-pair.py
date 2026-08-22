@@ -43,6 +43,10 @@ DEFAULT_PREFIX = "P1100"
 
 
 RESOLVED: dict[str, str] = {}
+CAMERAS: set[str] = set()
+
+#: Imaging / camera, as this camera reports it.
+CAMERA_CLASS = 0x080620
 
 
 def resolved_name(device) -> str:
@@ -86,13 +90,28 @@ async def discover(prefix: str, seconds: float, paired: bool = False) -> list:
 
     async def consider(device) -> None:
         name = await name_of(device)
-        mark = "  <-- camera" if name.startswith(prefix) else ""
+        # Windows often fails to resolve the name and substitutes
+        # "Bluetooth <address>". The camera showed up that way, so matching on
+        # the name alone misses it. Its class of device is the reliable mark:
+        # 0x080620 is imaging/camera, and nothing else here reports that.
+        klass = await class_of(device)
+        looks_right = name.startswith(prefix) or klass == CAMERA_CLASS
+        mark = "  <-- camera" if looks_right else ""
         state = "paired" if device.pairing.is_paired else "unpaired"
-        log(f"  {name!r}  {state}{mark}")
+        extra = f" class=0x{klass:06x}" if klass else ""
+        log(f"  {name!r}  {state}{extra}{mark}")
         names[device.id] = name
         RESOLVED[device.id] = name
-        if name.startswith(prefix):
+        if looks_right:
+            CAMERAS.add(device.id)
             done.set()
+
+    async def class_of(device) -> int:
+        try:
+            resolved = await BluetoothDevice.from_id_async(device.id)
+        except Exception:
+            return 0
+        return resolved.class_of_device.raw_value if resolved else 0
 
     def on_added(sender, device):
         if device.id in seen:
@@ -131,7 +150,7 @@ async def cmd_list(args) -> None:
 
 async def cmd_pair(args) -> None:
     devices = await discover(args.prefix, args.seconds)
-    targets = [d for d in devices if resolved_name(d).startswith(args.prefix)]
+    targets = [d for d in devices if d.id in CAMERAS or resolved_name(d).startswith(args.prefix)]
     if not targets:
         sys.exit(
             f"no classic device named {args.prefix}* -- run the BLE handshake first "
@@ -187,7 +206,7 @@ async def cmd_services(args) -> None:
     This answers which, by reading its SDP records.
     """
     devices = await discover(args.prefix, args.seconds, paired=True)
-    targets = [d for d in devices if resolved_name(d).startswith(args.prefix)]
+    targets = [d for d in devices if d.id in CAMERAS or resolved_name(d).startswith(args.prefix)]
     if not targets:
         sys.exit(f"no paired device named {args.prefix}*")
 
@@ -214,7 +233,7 @@ async def cmd_forget(args) -> None:
     # that already exists, which is the whole point of forgetting it.
     devices = await discover(args.prefix, args.seconds, paired=True)
     for device in devices:
-        if not resolved_name(device).startswith(args.prefix):
+        if device.id not in CAMERAS and not resolved_name(device).startswith(args.prefix):
             continue
         result = await device.pairing.unpair_async()
         log(f"unpair {device.name!r}: {DeviceUnpairingResultStatus(result.status).name}")

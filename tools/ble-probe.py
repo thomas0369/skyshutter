@@ -174,10 +174,18 @@ async def connect(args):
         # minimum MTU of 23 and exposes no services at all. Treat that as a
         # failure -- it is indistinguishable from a working link until the
         # first read fails with "characteristic not found".
-        if not any(s.uuid.lower() == VENDOR_SERVICE for s in client.services):
+        # Two ways a connection comes up useless. It can report success with
+        # no services at all, or it can negotiate the bare minimum MTU of 23 --
+        # the handshake still squeezes through that, but everything after it
+        # behaves badly, and classic bonding then times out. Every run that
+        # worked end to end had 515.
+        healthy = (
+            any(s.uuid.lower() == VENDOR_SERVICE for s in client.services)
+            and client.mtu_size > 100
+        )
+        if not healthy:
             print(
-                f"  connect {attempt}/{args.retries}: hollow "
-                f"(mtu={client.mtu_size}, no vendor service)",
+                f"  connect {attempt}/{args.retries}: unusable (mtu={client.mtu_size})",
                 file=sys.stderr,
                 flush=True,
             )
