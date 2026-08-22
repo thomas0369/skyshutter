@@ -139,6 +139,40 @@ def test_the_named_characteristics_are_the_ones_we_decode():
         assert ble.characteristic(uuid16).can(Property.READ)
 
 
+# --- what the characteristics are for ---------------------------------------
+
+
+def test_the_authentication_channel_has_the_shape_a_handshake_needs():
+    """17 zero bytes were read from it, and a handshake message is 17 bytes."""
+    auth = ble.characteristic(ble.AUTHENTICATION)
+    assert ble.AUTH_MESSAGE_LENGTH == 17
+    assert auth.can(Property.WRITE) and auth.can(Property.INDICATE)
+
+
+def test_the_two_write_only_channels_are_named():
+    """0x2002 takes the client's name, 0x2007 takes a location."""
+    assert ble.name_of(0x2002) == "client device name"
+    assert ble.name_of(0x2007) == "location information"
+    for uuid16 in (0x2002, 0x2007):
+        assert not ble.characteristic(uuid16).can(Property.READ)
+
+
+def test_the_shutter_channel_can_notify():
+    """The remote-release control point has to push events back."""
+    assert ble.characteristic(ble.SHUTTER).can(Property.NOTIFY)
+    assert ble.name_of(ble.SHUTTER) == "LSS control point"
+
+
+def test_names_exist_for_everything_this_camera_exposes_except_the_new_ones():
+    """0x2082..0x2087 appear on this camera but in no published list."""
+    unnamed = {c.uuid16 for c in CHARACTERISTICS if not ble.name_of(c.uuid16)}
+    assert unnamed == {0x2082, 0x2083, 0x2084, 0x2086, 0x2087}
+
+
+def test_an_unknown_characteristic_has_no_name():
+    assert ble.name_of(0x1234) == ""
+
+
 # --- lookups ----------------------------------------------------------------
 
 

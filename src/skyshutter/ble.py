@@ -107,10 +107,52 @@ _BY_UUID = {c.uuid16: c for c in CHARACTERISTICS}
 _BY_VALUE_HANDLE = {c.value_handle: c for c in CHARACTERISTICS}
 
 
+#: What each characteristic is for.
+#:
+#: The names come from other people's reverse engineering of the vendor app
+#: (see docs/FINDINGS.md) -- read for verification, not copied as code. Four of
+#: them we had already established independently from the values this camera
+#: returned, and those four agree: 0x2003 held the device name, 0x200b the
+#: serial, 0x2006 decoded as the wall clock, and 0x2a19 read 100. That
+#: agreement is the reason to trust the rest.
+#:
+#: "LSS" is the vendor's own prefix for the remote-shutter part of the service.
+NAMES: dict[int, str] = {
+    0x2000: "authentication",
+    0x2001: "power control",
+    0x2002: "client device name",
+    0x2003: "server device name",
+    0x2004: "connection configuration",
+    0x2005: "connection establishment",
+    0x2006: "current time",
+    0x2007: "location information",
+    0x2008: "LSS control point",
+    0x2009: "LSS feature",
+    0x200A: "LSS cable attachment",
+    0x200B: "LSS serial number string",
+    0x2080: "LSS category info",
+    0x2081: "LSS status for capture",
+    0x2A19: "battery level",
+}
+
 #: Characteristics whose meaning is established, not guessed.
-CLOCK = 0x2006
+AUTHENTICATION = 0x2000
+CLIENT_NAME = 0x2002
 NAME = 0x2003
+CONNECTION_ESTABLISHMENT = 0x2005
+CLOCK = 0x2006
+SHUTTER = 0x2008
 SERIAL = 0x200B
+
+#: Length of one authentication message on 0x2000. Stage byte, then an 8-byte
+#: timestamp, a 4-byte device id and a 4-byte nonce, all little-endian. Matches
+#: the 17 zero bytes this camera returns before anyone has authenticated.
+AUTH_MESSAGE_LENGTH = 17
+
+
+def name_of(uuid16: int) -> str:
+    """What a characteristic is for, or an empty string if nobody knows."""
+    return NAMES.get(uuid16, "")
 
 
 def decode_clock(raw: bytes) -> datetime:

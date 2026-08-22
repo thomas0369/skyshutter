@@ -138,15 +138,41 @@ async def cmd_watch(args) -> None:
         await asyncio.sleep(args.seconds)
 
 
+async def connect(args):
+    """Scan and connect, retrying both.
+
+    Finding the camera and connecting to it are separate failures with
+    separate causes: it stops advertising when its menu closes, and it refuses
+    connections for reasons still unclear. Retrying the pair of them is the
+    only thing that has worked reliably.
+    """
+    for attempt in range(1, args.retries + 1):
+        device = await find(args)
+        client = BleakClient(device, timeout=args.timeout)
+        try:
+            await client.connect()
+        except Exception as exc:
+            print(
+                f"  connect {attempt}/{args.retries} to {device.address}: "
+                f"{type(exc).__name__}",
+                file=sys.stderr,
+                flush=True,
+            )
+            await asyncio.sleep(2)
+            continue
+        return client
+    sys.exit("found the camera but could not connect")
+
+
 async def cmd_session(args) -> None:
     """Tree, values and live traffic in one connection.
 
     Reconnecting costs a scan each time and the camera is not always awake, so
     when it is reachable, take everything at once.
     """
-    device = await find(args)
-    async with BleakClient(device, timeout=args.timeout) as client:
-        print(f"connected {device.address}  mtu={client.mtu_size}\n")
+    client = await connect(args)
+    async with client:
+        print(f"connected  mtu={client.mtu_size}\n")
 
         for service in client.services:
             print(f"SERVICE handle=0x{service.handle:04x} uuid={service.uuid}")

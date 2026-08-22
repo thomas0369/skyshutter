@@ -263,6 +263,46 @@ belegt.
 
 ## Fremdmessungen
 
+### 22.08.2026 — Bedeutung der BLE-Characteristics aus fremder Reverse-Engineering-Arbeit
+Quelle:     Konstantenliste aus der Hersteller-App, gepostet im dslrdashboard-Forum
+            (Thema 2384, zu einer D850) sowie ein Protokoll-Aufsatz zum Ersatz der
+            App durch einen ESP32 (skyblond.info/archives/1115.html).
+            **Rang: fremde RE-Arbeit, kein Urteil und keine Herstellerdoku.**
+Ergebnis:   | UUID | Name laut Quelle | unsere Messung |
+            |---|---|---|
+            | 0x2000 | AUTHENTICATION | 17 B null, read+write+indicate |
+            | 0x2001 | POWER_CONTROL | `03` |
+            | 0x2002 | CLIENT_DEVICE_NAME | write-only |
+            | 0x2003 | SERVER_DEVICE_NAME | **Gerätename — deckt sich** |
+            | 0x2004 | CONNECTION_CONFIGURATION | 102 B |
+            | 0x2005 | CONNECTION_ESTABLISHMENT | `03` |
+            | 0x2006 | CURRENT_TIME | **Uhr — deckt sich** |
+            | 0x2007 | LOCATION_INFORMATION | write-only |
+            | 0x2008 | LSS_CONTROL_POINT | `1100`, notify |
+            | 0x2009 | LSS_FEATURE | `fd010000` |
+            | 0x200a | LSS_CABLE_ATTACHMENT | **fehlt an dieser Kamera** |
+            | 0x200b | LSS_SERIAL_NUMBER_STRING | **Seriennummer — deckt sich** |
+            | 0x2080 | LSS_CATEGORY_INFO | `03000000` |
+            | 0x2081 | LSS_STATUS_FOR_CAPTURE | **fehlt an dieser Kamera** |
+            | 0x2a19 | BATTERY_LEVEL | **`0x64` = 100 — deckt sich** |
+
+            Format der Authentifizierung auf `0x2000`, laut Quelle 17 Byte:
+            Stufenbyte (0x01–0x04), 8 Byte Zeitstempel, 4 Byte Geräte-ID,
+            4 Byte Nonce, alles little-endian. **Die Länge deckt sich mit den
+            17 Nullbytes, die wir an dieser Kamera gelesen haben.**
+Folge:      Vier unabhängig gemessene Werte bestätigen die Liste — das ist der
+            Grund, dem Rest zu trauen. Zwei Einträge der Liste existieren an
+            dieser Kamera nicht (0x200a, 0x2081), fünf Characteristics dieser
+            Kamera stehen in keiner veröffentlichten Liste (0x2082, 0x2083,
+            0x2084, 0x2086, 0x2087) — vermutlich neuere Erweiterungen.
+            Namen übernommen in `src/skyshutter/ble.py` (`NAMES`), gelesen zur
+            Verifikation, nicht als Code kopiert.
+
+            **Konsequenzen für den Plan:** `0x2005` CONNECTION_ESTABLISHMENT ist
+            der Kandidat für den WLAN-Start; davor steht der Handshake auf
+            `0x2000`. `0x2008` LSS_CONTROL_POINT ist der Fernauslöser — die
+            Kamera trägt das Fernbedienungsprofil also tatsächlich.
+
 Messungen **anderer Leute** an denselben Modellen. Sie zählen nicht als eigene
 Messung und schließen kein Gate — sie verschieben nur Wahrscheinlichkeiten und
 sagen, wo sich das eigene Messen lohnt. Streng getrennt vom Abschnitt oben.
