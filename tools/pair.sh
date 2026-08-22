@@ -44,7 +44,12 @@ fi
 # Nach dem Bestaetigen verlaesst die Kamera den Advertising-Modus. Fuer den
 # Reconnect muss das Menue deshalb noch einmal geoeffnet werden -- ohne diesen
 # Hinweis laeuft Schritt 3 zwei Minuten ins Leere.
+# Nach dem Bestaetigen ist die Kamera einige Sekunden beschaeftigt und sendet
+# nicht. Sofort loszulaufen heisst: 20 Scans ins Leere. Also erst ansagen,
+# dann Zeit lassen.
 banner ">>> JETZT: Kameramenue ERNEUT oeffnen (fuer den Abschluss) <<<"
+echo "    ... 20 Sekunden Zeit dafuer ..."
+sleep 20
 
 banner "3/3  RECONNECT  ($(date +%H:%M:%S))  device=$DEVICE nonce=$NONCE"
 "$PY" -u ble-probe.py --retries 15 --timeout 6 pairing --quick \
