@@ -16,6 +16,7 @@ vendor base it is a different characteristic and must not be read as one.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import IntFlag
 
 #: Suffix every UUID in this service carries. Not the Bluetooth base.
@@ -104,6 +105,31 @@ CHARACTERISTICS: tuple[Characteristic, ...] = (
 
 _BY_UUID = {c.uuid16: c for c in CHARACTERISTICS}
 _BY_VALUE_HANDLE = {c.value_handle: c for c in CHARACTERISTICS}
+
+
+#: Characteristics whose meaning is established, not guessed.
+CLOCK = 0x2006
+NAME = 0x2003
+SERIAL = 0x200B
+
+
+def decode_clock(raw: bytes) -> datetime:
+    """Read the camera's clock out of characteristic 0x2006.
+
+    Ten bytes: a little-endian year, then month, day, hour, minute, second,
+    then three bytes whose meaning is unknown. Confirmed once, on 22.08.2026,
+    against a value that matched the wall clock to the minute.
+    """
+    if len(raw) < 7:
+        raise ValueError(f"expected at least 7 bytes, got {len(raw)}")
+    year = int.from_bytes(raw[0:2], "little")
+    month, day, hour, minute, second = raw[2:7]
+    return datetime(year, month, day, hour, minute, second)
+
+
+def decode_text(raw: bytes) -> str:
+    """Read one of the padded ASCII fields (0x2003 name, 0x200b serial)."""
+    return raw.split(b"\x00", 1)[0].decode("ascii", "replace")
 
 
 def characteristic(uuid16: int) -> Characteristic:

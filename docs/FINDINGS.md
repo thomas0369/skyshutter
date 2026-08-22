@@ -71,6 +71,51 @@ Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
 
+### 22.08.2026 — Alle lesbaren BLE-Characteristics ausgelesen
+Kommando:   `python tools/ble-probe.py session --seconds 0`
+Aufbau:     Wie unten. Ohne Pairing, ohne Handy. Kein einziger Lesezugriff wurde
+            mit `Insufficient Authentication` abgelehnt — die Kamera gibt alles
+            an einen fremden Client heraus.
+Ergebnis:   Rohwerte, Seriennummer geschwärzt (`SSSSSSSS`, achtstellig):
+
+            | UUID | Bytes | Wert |
+            |---|---|---|
+            | 0x2000 | 17 | `00…00` (alles null) |
+            | 0x2001 | 1 | `03` |
+            | 0x2003 | 32 | `P1100_SSSSSSSS` + Nullen |
+            | 0x2004 | 102 | `03` + Nullen, endet auf `03ef010000` |
+            | 0x2005 | 1 | `03` |
+            | 0x2006 | 10 | `ea070816090332040100` |
+            | 0x2008 | 2 | `1100` |
+            | 0x2009 | 4 | `fd010000` (LE 509) |
+            | 0x2a19 | 1 | `64` (100) |
+            | 0x200b | 33 | `SSSSSSSS` + Nullen |
+            | 0x2080 | 4 | `03000000` |
+            | 0x2082 | 32 | `0202 0303 0f0f 1111 1212 1313 1414 2828 2929 2020 2121` + Nullen |
+            | 0x2084 | 6 | `000000000000` |
+            | 0x2086 | 4 | `03000000` |
+            | 0x2087 | 17 | `00…00` (alles null) |
+
+            Standard-Services nebenbei: `0x2a00` = derselbe Gerätename,
+            `0x2a04` = `ffffffff0000ffff` (keine bevorzugten Verbindungsparameter),
+            `0x2aa6` = `01`, `0x2b2a` (Database Hash) = `000000000000180ac1cca828c1d597b0`.
+Folge:      **Belegt:** `0x2006` ist die Uhr. `ea07`=2026, `08`, `16`=22, `09`,
+            `03`, `32`=50 — also 2026-08-22 09:03:50, und das stimmte auf die
+            Minute mit der Laborzeit überein. Die letzten drei Bytes `040100`
+            sind unklar (Wochentag passt nicht: der 22.08.2026 ist ein Samstag).
+            `0x2003` und `0x200b` tragen Gerätename und Seriennummer.
+
+            **Deutung, nicht belegt:** `0x2a19` = `0x64` = 100 sieht nach
+            Ladezustand in Prozent aus — es steht auf der Vendor-Base, aber die
+            Zahl passt zum SIG-Muster. `0x2082` besteht aus elf Paaren
+            identischer Bytes (2,3,15,17,18,19,20,40,41,32,33) und riecht nach
+            einer Fähigkeiten- oder Kommandoliste. `0x2000` und `0x2087` sind
+            beide 17 Byte lang, beide read+write+indicate und beide leer — das
+            Muster eines Kommando- und eines Antwortkanals.
+
+            Nicht lesbar und damit weiter unbekannt: `0x2002`, `0x2007`,
+            `0x2083`. Eine davon startet vermutlich das WLAN.
+
 ### 22.08.2026 — GATT-Baum an der Kamera bestätigt, WLAN-Parameter, kein AP im Menümodus
 Kommando:   `python tools/ble-probe.py scan`, dann `dump` (Windows-Python, bleak)
             `netsh wlan show networks mode=bssid` / `netsh wlan connect`

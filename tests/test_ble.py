@@ -8,6 +8,8 @@ tests change with it; silent drift is what they are here to prevent.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 
 from skyshutter import ble
@@ -107,6 +109,34 @@ def test_only_one_characteristic_notifies_the_rest_indicate():
 
 def test_a_read_only_characteristic_has_no_cccd():
     assert ble.characteristic(0x2003).cccd_handle is None
+
+
+# --- decoding measured values -----------------------------------------------
+
+
+def test_the_clock_decodes_the_value_that_was_measured():
+    """The literal bytes read from 0x2006 on 22.08.2026 at 09:03:50."""
+    raw = bytes.fromhex("ea070816090332040100")
+    assert ble.decode_clock(raw) == datetime(2026, 8, 22, 9, 3, 50)
+
+
+def test_the_clock_needs_a_full_date():
+    with pytest.raises(ValueError, match="7 bytes"):
+        ble.decode_clock(bytes.fromhex("ea070816"))
+
+
+def test_padded_text_stops_at_the_first_nul():
+    raw = bytes.fromhex("50313130305f3132333435363738") + bytes(18)
+    assert ble.decode_text(raw) == "P1100_12345678"
+
+
+def test_text_without_padding_still_decodes():
+    assert ble.decode_text(b"12345678") == "12345678"
+
+
+def test_the_named_characteristics_are_the_ones_we_decode():
+    for uuid16 in (ble.CLOCK, ble.NAME, ble.SERIAL):
+        assert ble.characteristic(uuid16).can(Property.READ)
 
 
 # --- lookups ----------------------------------------------------------------
