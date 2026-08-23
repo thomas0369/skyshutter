@@ -221,11 +221,11 @@ def wait_cmd_complete(sock: socket.socket, opcode: int, timeout: float = 3.0) ->
             break
         if not pkt or pkt[0] != HCI_EVENT_PKT:
             continue
-        if pkt[1] == EVT_CMD_STATUS and len(pkt) >= 7:
+        if pkt[1] == EVT_CMD_STATUS and len(pkt) >= 6:
             rcv_op = struct.unpack("<H", pkt[4:6])[0]
             if rcv_op == opcode:
                 return pkt[3]
-        if pkt[1] == EVT_CMD_COMPLETE and len(pkt) >= 7:
+        if pkt[1] == EVT_CMD_COMPLETE and len(pkt) >= 8:
             rcv_op = struct.unpack("<H", pkt[4:6])[0]
             if rcv_op == opcode:
                 return pkt[7]
