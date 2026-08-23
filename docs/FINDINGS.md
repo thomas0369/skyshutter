@@ -531,7 +531,7 @@ Ergebnis:   Der bisher schnellste und einzige völlig glatte Durchlauf:
             21:56:25  Funk-Reset fertig
             21:56:50  connected  mtu=515
             21:56:51  salt #0 -> authenticated, registriert als 'skyshutter'
-                      Kennung: device=DDDDDDDD nonce=NNNNNNNN
+                      Kennung: device=DDDDDDDD nonce=NNNNNNNN (geschwärzt)
             21:56:59  inquiry: 'P1100_SSSSSSSS' unpaired class=0x080620
             21:57:01  *** code 034488 ***
             21:57:05  result: PAIRED  (custom 1/3)

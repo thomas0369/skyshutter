@@ -122,13 +122,13 @@ Geräte nicht, die klar in Reichweite sind. Fünf Fehlversuche in Folge, dann
 nach `Off`/`On` sofort wieder alles gefunden.
 
 **6. Der Inquiry meldet Geräte, bevor ihr Name da ist.** Die Kamera erschien
-mehrfach als `''` und mehrfach als `Bluetooth AA:BB:CC:DD:EE:FF` — Windows'
+mehrfach als `''` und mehrfach als `Bluetooth AA:BB:CC:DD:EE:FF` (geschwärzt) — Windows'
 Platzhalter, wenn die Namensauflösung nicht durchkommt. Wer auf den Namen
 filtert, wirft genau das Gerät weg, das er sucht.
 
 **Zuverlässig ist die Geräteklasse:** `class_of_device == 0x080620`
 (Imaging/Kamera). `classic-pair.py` erkennt die Kamera daran, unabhängig vom
-Namen. Und die dort auftauchende Adresse `AA:BB:CC:DD:EE:FF` ist dieselbe, mit
+Namen. Und die dort auftauchende Adresse ist dieselbe, mit
 der die Hersteller-App im Handy-Log klassisch gekoppelt hat — es ist die
 **klassische** Bluetooth-Adresse der Kamera, eine andere als ihre BLE-Adresse.
 
