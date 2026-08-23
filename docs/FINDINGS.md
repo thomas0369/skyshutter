@@ -98,6 +98,29 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 23.08.2026 — Wake-Flags stehen im Advertisement — verbindungsfrei lesbar, aktuell alle 0
+Kommando:   `ble-probe.py adwake` (Scan, kein Connect), Kamera im
+            Verbindungsmenü, „Bluetooth blinkt, kein WLAN-Zeichen" (Thomas).
+Ergebnis:   ```
+            company=0x0399 (Nikon)  data=01c96e6b00
+              clientId = 01c96e6b, LSS-Ad-Info-Byte = 0x00
+              -> quickWakeUp=0  autoTransfer=0  btcCoopWait=0
+            ```
+Deutung:    Der Wake-/Bereitschaftszustand steckt in einem Byte der
+            Hersteller-Advertise-Daten (`BleScanData`: `hasQuickWakeUp` = Bit
+            0x8, `isAutoTransfer` = 0x2, `isBtcCoopWait` = 0x10). **Lesbar per
+            Scan, ohne Verbindung** — wichtig, weil der Windows-Stack zuverlässig
+            nur einmal direkt nach einem Funk-Reset verbindet, aber immer scannt.
+            Offset: das Byte liegt im smali bei Index 6 eines Arrays *mit*
+            Company-ID; bleak liefert die Nutzlast *ohne* Company-ID, also
+            `payload[4]`. Aktuell `0x00` — deckt sich mit `INVALID_WAKE` und dem
+            reinen BT-Modus. Die Kamera advertisiert nur, solange „Mit Smartgerät
+            verbinden" offen ist.
+Offen:      Welcher Kamerazustand setzt eines dieser Bits / kippt `0x2001` auf
+            `VALID_WAKE`? Und: schafft SnapBridge selbst an dieser Kamera WLAN-
+            Live-View — wenn ja, ist der Zustand erreichbar und mit `adwake`
+            sichtbar zu machen.
+
 ### 23.08.2026 — Das WLAN-Gate ist `0x2001 = INVALID_WAKE`, nicht ein BLE-Schritt
 Kommando:   `ble-probe.py pairing --register skyshutter --establish 01 --hold 60
             --quick`, ausgeführt über das Windows-Python aus der WSL-Session,

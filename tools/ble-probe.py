@@ -95,18 +95,21 @@ async def cmd_adwake(args) -> None:
     """Watch the camera's advertisement for its wake/readiness flags.
 
     The vendor scan parser (BleScanData) reads an "LSS ad info" byte from the
-    manufacturer data -- byte offset 6 -- and exposes three flags from it:
-    quickWakeUp (bit 0x8), autoTransfer (bit 0x2), btcCoopWait (bit 0x10). This
-    is all in the advertisement, so it needs no connection -- which matters
-    because the Windows stack connects reliably only right after a radio reset,
-    while scanning always works. The camera only advertises while *Connect to
-    smart device* is open on its screen. Prints a line whenever the bytes change.
+    manufacturer data and exposes three flags from it: quickWakeUp (bit 0x8),
+    autoTransfer (bit 0x2), btcCoopWait (bit 0x10). The smali indexes byte 6 of
+    a company-id-included array; bleak hands us the payload with the 2-byte
+    company id stripped, so the same byte is payload[4] here (verified against
+    real bytes 01c96e6b00 -> clientId 01c96e6b, ad-info 00). It is all in the
+    advertisement, so it needs no connection -- which matters because the Windows
+    stack connects reliably only right after a radio reset while scanning always
+    works. The camera only advertises while *Connect to smart device* is open on
+    its screen. Prints a line whenever the bytes change.
     """
     def decode(payload: bytes) -> str:
-        if len(payload) <= 6:
+        if len(payload) < 5:
             return "(zu kurz fuer LSS-Ad-Info)"
-        b = payload[6]
-        return (f"byte6=0x{b:02x}  quickWake={(b >> 3) & 1} "
+        b = payload[4]
+        return (f"adInfo=0x{b:02x}  quickWake={(b >> 3) & 1} "
                 f"autoTransfer={(b >> 1) & 1} btcCoopWait={(b >> 4) & 1}")
 
     seen: dict = {}
