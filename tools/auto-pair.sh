@@ -52,7 +52,7 @@ while true; do
     [ -z "$RSSI" ] && RSSI=0
 
     NOW=$(date +%s)
-    if [ $((NOW - LASTTRY)) -lt 150 ]; then sleep 10; continue; fi
+    if [ $((NOW - LASTTRY)) -lt 45 ]; then sleep 10; continue; fi
     if [ "$FAILS" -ge 3 ]; then
         log "Falle-5a-Ruhe: 3 Fehlversuche -> 6 h Pause (pairing.md)"
         sleep 21600
