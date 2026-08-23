@@ -27,7 +27,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
 | **Erreicht (neu)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die **Kamera öffnet ihren WLAN-AP** (am Display + als `netsh`-SSID bestätigt). Kein RFCOMM, kein `0x2021` |
 | **Offenes Gate** | **Beitritt + Live View.** Der AP ist ein normaler broadcastender WPA2-AP, aber (a) die Hochfahrt ist zwischen Läufen inkonsistent (mal stabil scanbar, mal nie), (b) `remote-start --join` muss zuverlässig auf dem freien Adapter beitreten, (c) danach PTP/IP `host:15740` Live View `0x9201`/`0x9428` |
-| **Nächster Schritt** | **Beitritt über den Mango (WISP), nicht Windows.** Windows-`netsh` wechselt den Adapter nicht zuverlässig (+ evtl. WPA3). Der Mango soll per **GL-Repeater** (Web-UI, „manuell": SSID `P1100_…`, WPA2) ins Kamera-Netz; rohes uci/iwpriv treibt die MTK-Station nicht (Kanal-Tanz auf dem Einzel-Radio macht nur GLs Daemon). Dann Portweiterleitung `15740→Kamera` und `tools/liveview.py --host <mango>`. Werkzeuge: `remote-start.py`, `liveview.py`, [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md) |
+| **Nächster Schritt** | **Letzte Meile ist reine Timing-Flakiness, kein offenes Wissen.** Rezept steht (Messung „Mango-Join fast fertig"): `remote-start --join` (hält AP wach) → frische Creds aus `%TEMP%/skyshutter_creds.txt` → `ubus repeater connect` (frisches PW!) → Portweiterleitung `15740→Kamera` → `liveview.py --host 192.168.1.143`. Nötig ist nur eine saubere BLE-Session (Stack trennt ~1/3), die der Mango im AP-Fenster greift |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -98,6 +98,37 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — Mango-Join fast fertig: AP sichtbar (ch6/WPA2), Passwort rotiert, letzte Meile = Timing
+Aufbau:     `remote-start.py` (BLE→AP) + GL.iNet Mango als WISP-Client über GLs
+            `ubus call repeater connect` (SSH root@192.168.1.143). PTP/IP dann aus
+            WSL via `tools/liveview.py` über eine Portweiterleitung `15740→Kamera`.
+Belegt:     - Der Mango **sieht** den Kamera-AP im Scan: `P1100_…`, **Kanal 6**,
+              BSSID `7c:b8:da:a6:b7:9b` (Kamera-OUI), **WPA2PSK/TKIPAES**,
+              Signal −45. Kein WPA3 → `proto=psk2` ist richtig.
+            - **Das WLAN-Passwort rotiert pro Session** (einmal 8, einmal 9
+              Zeichen). Ein externer Joiner MUSS das *aktuelle* per `lssec`
+              entschlüsselte Passwort nehmen — `remote-start` schreibt es dafür
+              nach `%TEMP%/skyshutter_creds.txt`. Ein gemerktes/altes Passwort
+              scheitert (`repeater fail_type: not-found`/auth).
+            - GLs `repeater connect {ssid,key,proto,remember}` ist der richtige
+              Mechanismus (macht den AP+STA-Kanalwechsel auf dem Einzel-Radio);
+              rohes uci/iwpriv nicht.
+Offen (Timing, kein Wissen mehr): (a) der Windows-BLE-Stack trennt ~1/3 der
+            Läufe mitten im Flow (`WinError -2147023673`); (b) der Kamera-AP bleibt
+            nur zuverlässig oben, wenn ein Client ihn aktiv anprobt — mit
+            `--join` (netsh klopft an) stand er 110 s stabil, ohne fällt er in
+            Sekunden; (c) die Mango-Scan-/Connect-Latenz muss das AP-Fenster
+            treffen. Alle drei sind Flakiness/Timing, keine offene Erkenntnis.
+Rezept (vollständig, sobald eine saubere BLE-Session steht):
+            ```
+            1. remote-start.py --register skyshutter --join --hold 240
+               (hält den AP wach, schreibt frische Creds)
+            2. Creds aus %TEMP%/skyshutter_creds.txt lesen
+            3. ssh Mango: ubus call repeater connect {ssid,key(frisch),psk2,remember}
+            4. Kamera-IP = apcli0-Lease-Gateway; Portweiterleitung 15740→Kamera
+            5. liveview.py --host 192.168.1.143   (PTP/IP, 0x9201/0x9428)
+            ```
 
 ### 23.08.2026 — DURCHBRUCH: der korrigierte BLE-Flow fährt den Kamera-AP hoch
 Kommando:   `remote-start.py --register skyshutter --join` (Windows-Python),
