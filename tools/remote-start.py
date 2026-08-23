@@ -124,6 +124,37 @@ async def find_camera(timeout: float):
     return await BleakScanner.find_device_by_filter(match, timeout=timeout)
 
 
+async def wait_for_ad(timeout: float) -> bool:
+    """Block until the ble-watch scanner service reports a FRESH sighting.
+
+    The camera advertises in bursts; a one-shot scan hitting a silent phase
+    was pure luck (playbook trap 6). The always-on scanner removes the luck:
+    we wait for its status file, then the short find_camera is guaranteed to
+    hit an active advertising phase.
+    """
+    import json
+
+    deadline = time.monotonic() + timeout
+    warned = False
+    while time.monotonic() < deadline:
+        try:
+            with open(os.path.join(os.environ.get("TMPDIR", "/tmp"), "camera_seen.json")) as fh:
+                data = json.load(fh)
+            age = time.time() - data.get("ts", 0)
+            if age < 10:
+                flags = data.get("flags", {})
+                f = ",".join(k for k, v in flags.items() if v is True) or "ruhend"
+                log(f"  Scanner: Sichtung vor {age:.1f}s (rssi {data.get('rssi')}, {f})")
+                return True
+        except (OSError, ValueError):
+            pass
+        if not warned:
+            log("  warte auf Scanner-Sichtung (Kamera-Menü offen? ble-watch läuft?)")
+            warned = True
+        await asyncio.sleep(1)
+    return False
+
+
 async def handshake(client, args):
     """Stage 2/3: CCCDs + 4-stage LSS handshake + name. Returns (s1, s2, s4) bytes."""
 
@@ -194,6 +225,9 @@ async def run(args) -> int:
     await ensure_bond(args.name)
 
     log("Stage 2: BLE connect + handshake")
+    if args.wait_for_ad and not await wait_for_ad(args.timeout):
+        log("  keine Scanner-Sichtung im Zeitfenster -- Kamera sendet nicht")
+        return 2
     device = await find_camera(args.timeout)
     if device is None:
         log("  Kamera sendet nicht (Verbindungsmenü offen? Funk-Reset nötig?)")
@@ -474,6 +508,11 @@ def main() -> int:
     p.add_argument("--timeout", type=float, default=25.0, help="BLE scan/connect timeout")
     p.add_argument("--hold", type=float, default=60.0, help="seconds to hold BLE + watch the AP")
     p.add_argument("--join", action="store_true", help="also join the AP and open live view")
+    p.add_argument(
+        "--wait-for-ad",
+        action="store_true",
+        help="wait for the ble-watch scanner's fresh sighting instead of gambling on a one-shot scan",
+    )
     p.add_argument("--device", help="reconnect with a known client device id (hex)")
     p.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
     args = p.parse_args()
