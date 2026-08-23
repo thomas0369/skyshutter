@@ -1,8 +1,17 @@
-# FINDINGS — Messprotokoll
+# Messprotokoll
 
 Die einzige Quelle der Wahrheit über die echte Kamera. Alles hier steht, weil es
 **gemessen** wurde, nicht weil es plausibel ist. Widerspricht ein Chatverlauf
 diesem Dokument, gewinnt dieses Dokument.
+
+> **Wer nachschlagen will, was die Kamera kann, ist in
+> [referenz.md](referenz.md) besser aufgehoben.** Dieses Dokument ist
+> chronologisch und beantwortet die andere Frage: *wann* wurde etwas
+> festgestellt, *womit*, und was folgte daraus.
+
+**Aufbau:** [Stand](#stand) · [Offene Fragen](#offene-fragen) ·
+[Messungen](#messungen) (neueste zuerst) · [Fremdmessungen](#fremdmessungen) ·
+[Widerlegtes](#widerlegtes)
 
 Pflege: [playbook.md](playbook.md), Abschnitt 2, Schritt 3.
 
@@ -14,11 +23,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | 1 — Ist es PTP/IP? · **PTP selbst ist bestätigt** (USB, 23.08.) |
-| **Erreicht** | **Kopplung läuft glatt durch** — 40 s vom Funk-Reset bis `PAIRED`, erster Versuch, Kamera meldet die Verbindung selbst. Ablauf in [pairing.md](pairing.md) |
-| **Offenes Gate** | Startet `0x01` auf `0x2005` als **gekoppelter** Client den AP? Der Befehl steht fest (Herstellercode, 23.08.), die Wirkung ist ungemessen |
+| **Phase** | 1 abgeschlossen — **PTP ist bestätigt**, Live View existiert. Phase 2: das Bild holen |
+| **Erreicht** | 38 Operationen und 20 Properties gemessen · Kopplung reproduzierbar in 40 s · zweiter Transport (USB) im Repo · Protokoll der Hersteller-App gelesen |
+| **Offenes Gate** | Startet `0x01` auf `0x2005` als **gekoppelter** Client den Access Point? Der Befehl steht fest, die Wirkung ist ungemessen |
 | **Fehlende Messung** | Ein Schreibversuch als gekoppelter Client, danach ein WLAN-Scan |
 | **Nächster Schritt** | Funk-Reset → Kameramenü → `ble-probe.py pairing --device … --nonce … --establish 01` → `netsh wlan show networks` |
+| **Danach** | `0x2004` als gekoppelter Client lesen — dann steht statt der Nullen das Chiffrat da, und die Entschlüsselung lässt sich gegen das angezeigte Passwort prüfen |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-23 |
 
@@ -30,38 +40,52 @@ PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
 
 ## Offene Fragen
 
-Spiegelt die Liste in [protokoll.md](protokoll.md); abgehakt wird nur mit Messung.
+Abgehakt wird nur mit Messung. Beantwortetes bleibt stehen — die Antwort ist
+oft mehr wert als die Frage.
 
-- [ ] Antwortet die Kamera im Remote-Modus auf TCP 15740?
-- [ ] Wird eine ungepaarte GUID akzeptiert, oder ist der BLE-Handshake Pflicht?
-- [x] Welche Vendor-Opcodes stehen in `operations_supported`? **38 Operationen,
-      über USB gemessen am 23.08.2026** — Liste unten und in protokoll.md.
-- [x] **Live View vorhanden?** **Ja** — `9201`, `9202`, `9203` stehen in der
-      Liste. Header-Länge, Auflösung und Bildrate bleiben offen, weil die
-      Kamera am USB-Kabel das Objektiv einzieht und den Start verweigert.
-- [x] Vendor-Properties für den 125×-Zoom? **`5008` Focal Length ist
-      schreibbar**, Bereich laut Kamera 24–3000 mm. Ob sich damit wirklich
-      zoomen lässt, ist ungetestet — ohne Live View sieht man es nicht.
-- [ ] Verträgt die Kamera parallele Sessions neben SnapBridge?
-- [x] Welche IP hat die Kamera als AP tatsächlich? **`192.168.0.10`**
-      (22.08.2026 vom Kameradisplay abgelesen, Kanal 6). `192.168.1.1` ist für
-      dieses Modell hinfällig — und zugleich das Gateway des Heimnetzes hier,
-      also doppelt ungeeignet als Vorgabe.
-- [x] WPA3-SAE bestätigt? **Nein — der AP läuft mit WPA2-PSK** (22.08.2026 vom
-      Kameradisplay abgelesen). Monitor-Mode und der Mango als Mitschneider
-      sind damit brauchbar.
-- [ ] Liefert die P1100 über **USB**-PTP eine `operations_supported`-Liste?
-      (Fremdmessung #1201 legt nahe: ja — umgeht die WLAN-Frage komplett)
-- [ ] Ist die P1100 tatsächlich ML-L7-kompatibel? (zuvor als belegt geführt,
-      Nachrecherche fand keine offizielle Bestätigung — der furble-Quick-Win
-      hängt daran)
-- [ ] Welche Bytes fließen über die write-only-Characteristics 0x2002, 0x2007,
-      0x2083? Eine davon dürfte den WLAN-Start auslösen. Braucht einen
-      btsnoop-Mitschnitt mit Nutzdaten — der Bugreport gibt sie nicht her.
-- [ ] Tragen 0x2000/0x2084/0x2087 (indicate) den Antwortkanal, und 0x2008
-      (notify) die Ereignisse? Reine Vermutung aus den Property-Bits.
-- [ ] Stimmt die CCCD-Ableitung (Value-Handle + 1) für die vier
-      notify/indicate-Characteristics?
+### Offen
+
+- [ ] **Startet `0x01` auf `0x2005` den Access Point?** Der Befehl ist aus dem
+      Herstellercode belegt, die Wirkung ungemessen. Das aktuelle Gate.
+- [ ] Antwortet die Kamera im WLAN-Modus auf TCP 15740? Der Port steht im
+      Herstellercode, die Kamera hat ihn noch nie für uns geöffnet.
+- [ ] Wird eine beliebige GUID akzeptiert? Die App benutzt für alle
+      Installationen dieselbe, was dagegen spricht, dass die Kamera darüber
+      unterscheidet.
+- [ ] Verträgt die Kamera eine zweite Sitzung neben der Hersteller-App?
+- [ ] Wie groß sind die Live-View-Bilder wirklich, und welche Bildrate hält
+      die Kamera durch?
+- [ ] Lässt sich der Zoom über `0x9016` tatsächlich fahren, und in welchen
+      Schritten?
+- [ ] Was tun `0x2082`–`0x2087`? Sechs Characteristics, die die Hersteller-App
+      **nicht kennt** — nur an der Kamera selbst zu erschließen.
+- [ ] Was sind die Properties `D303`, `D406`, `D407`? Ebenfalls in der App
+      nicht auffindbar.
+- [ ] Stimmt die CCCD-Ableitung (Value-Handle + 1)?
+- [ ] Ist dieses Modell ML-L7-kompatibel? Die Feature-Bits sprechen dagegen
+      (Kamerasteuerung über BLE ist abgeschaltet).
+
+### Beantwortet
+
+- [x] **Welche Operationen unterstützt die Kamera?** 38 Stück, am 23.08.2026
+      über USB ausgelesen. Vollständig in [referenz.md](referenz.md).
+- [x] **Gibt es Live View?** Ja — `9201`, `9202`, `9203` stehen in der Liste.
+- [x] **Wie sieht ein Live-View-Bild aus?** 384 Byte Header, big-endian, mit
+      Bildmaßen, AF-Feld und Lagesensor. Aus dem Herstellercode.
+- [x] **Wie zoomt man?** Über `0x9016`, nicht über Property `5008` — die wird
+      nur gelesen. Bereich laut Kamera 24–3000 mm.
+- [x] **Warum verweigert Live View am USB-Kabel?** Property `D1A4` Bit 24:
+      Objektiv eingefahren. Die Kamera zieht es beim Anstecken ein; das ist
+      keine Fehlfunktion, sondern Absicht.
+- [x] **Was startet den WLAN-Access-Point?** `0x01` auf `0x2005` — ein Bitfeld,
+      kein Zustandswert. Am Kameramenü geht es nicht (Herstellerdoku).
+- [x] **Welche IP hat die Kamera?** Sie ist DHCP-Server ihres eigenen Netzes;
+      die Adresse steht im Lease. Voreinstellung `192.168.0.10`.
+- [x] **Kann man über Bluetooth auslösen?** Nein. Feature-Bit 11 ist null, und
+      die dafür nötigen Characteristics fehlen.
+- [x] **Wie sind die WLAN-Zugangsdaten geschützt?** Blowfish-CBC. Der Schlüssel
+      entsteht aus Werten, die alle über BLE sichtbar oder frei wählbar sind —
+      der Nachbau ist möglich, aber noch nicht durchgeführt.
 
 ---
 

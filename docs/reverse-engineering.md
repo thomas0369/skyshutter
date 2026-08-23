@@ -23,8 +23,8 @@ Bevor irgendetwas mitgeschnitten wird: Kamera in den SnapBridge-Remote-Modus
 bringen, mit ihrem WLAN verbinden, und
 
 ```bash
-skyshutter probe            # sucht 192.168.1.1 / 192.168.0.1 / ...
-skyshutter --host 192.168.1.1 probe --ports 15740 80 8080 49152
+skyshutter probe            # sucht 192.168.0.10 / 192.168.1.1 / ...
+skyshutter --host 192.168.0.10 probe --ports 15740 80 8080 49152
 ```
 
 Drei mögliche Ausgänge:
@@ -64,14 +64,14 @@ das Heimnetz. Zwei Wege:
 **A. Auf dem Handy (gerootet oder per PCAP-Droid):**
 
 ```bash
-tcpdump -i wlan0 -s 0 -w /sdcard/coolpix.pcap host 192.168.1.1
+tcpdump -i wlan0 -s 0 -w /sdcard/coolpix.pcap host 192.168.0.10
 ```
 
 **B. Über den GL-X3000 als Zwischenstation:** Router als Client ins Kamera-WLAN
 hängen, Handy an den Router, und dort mitschneiden:
 
 ```bash
-tcpdump -i br-lan -s 0 -w /tmp/coolpix.pcap host 192.168.1.1
+tcpdump -i br-lan -s 0 -w /tmp/coolpix.pcap host 192.168.0.10
 ```
 
 Auswertung in Wireshark: `tcp.port == 15740`, Dissector „PTP/IP" prüfen

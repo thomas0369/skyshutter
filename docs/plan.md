@@ -1,11 +1,29 @@
-# Plan: von der Recherche zur P1100-API
+# Phasenplan
 
-Dieser Plan beschreibt, wie aus den existierenden Projekten plus eigenem Reverse
-Engineering eine vollständige API für die Coolpix P1100 wird — und vor allem:
-**wer davon was macht.**
+Wie aus vorhandenen Projekten plus eigenem Reverse Engineering eine vollständige
+API wird — und vor allem: **wer davon was macht.**
 
-Die Arbeitsweise dahinter steht in [playbook.md](playbook.md), der belegte Stand in
-[FINDINGS.md](FINDINGS.md).
+Die Arbeitsweise steht in [playbook.md](playbook.md), der belegte Stand in
+[FINDINGS.md](FINDINGS.md), das Nachschlagewerk in [referenz.md](referenz.md).
+
+## Stand der Phasen
+
+| Phase | Gate | Stand |
+|---|---|---|
+| **0** Fernauslöser über BLE | Kamera löst aus | **hinfällig** — die Kamera hat die Kamerasteuerung über BLE abgeschaltet (Feature-Bit 11) |
+| **1** Ist es PTP? | Antwort auf dem Steuerkanal | **erreicht**, über USB statt WLAN |
+| **2** Fähigkeiten auslesen | Vendor-Opcodes in der Liste | **erreicht** — 38 Operationen, 20 Properties |
+| **3** Live View und Auslöser | ein Bild im Browser | **offen** — Opcodes vorhanden, Bild fehlt |
+| **4** Zoom, Belichtung, Fokus | Zoomfahrt per Kommando | **teilweise** — `0x9016` bekannt, ungetestet |
+| **5** BLE-Pfad | `skyshutter wake` startet das WLAN | **fast** — der Auslöser ist bekannt, die Kopplung läuft |
+| **6** Robustheit | vier Stunden Intervall ohne Handgriff | offen |
+
+**Die Reihenfolge hat sich gedreht.** Der Plan ging davon aus, dass Phase 1 über
+WLAN läuft und Phase 5 nur bei Bedarf nötig wird. Tatsächlich lieferte **USB**
+die Bestätigung für Phase 1 und 2, während der WLAN-Zugang bis heute an einem
+einzigen Byte hängt. Phase 5 ist damit nicht die Rückfallebene, sondern der
+kritische Pfad — HDMI schaltet den Funk ab, USB zieht das Objektiv ein, und nur
+über WLAN gibt es Bild und Steuerung zugleich.
 
 ## 1. Rollenverteilung
 
@@ -62,14 +80,18 @@ Pico aus dem CD8150-Projekt zählt nicht), überspring das.
 
 ### Drei Fallen, die dich sonst eine Stunde kosten
 
-1. **Subnetz-Kollision.** Die Kamera ist sehr wahrscheinlich `192.168.1.1` — dasselbe
-   Netz, das viele Heimrouter benutzen. Bei Variante C den Router-LAN vorher auf
-   etwas anderes legen (GL.iNet-Default `192.168.8.1` ist gut). Bei B prüfen, dass
-   dein Heimnetz nicht ebenfalls `192.168.1.0/24` ist, sonst gehen Routen kaputt.
-2. **WPA3-SAE.** Nikon gibt für die P1100 WPA3-SAE an. Alte USB-Sticks und alte
-   Treiber können das nicht. Beim Kauf auf einen Chipsatz mit `mac80211`-Treiber im
-   Mainline-Kernel achten (MediaTek MT7601/MT7612 oder Realtek RTL8188EU/RTL8812AU
-   mit aktuellem Treiber) und `wpa_supplicant` ≥ 2.10. 2,4 GHz genügt — die Kamera
+1. **Subnetz-Kollision.** ~~Die Kamera ist sehr wahrscheinlich `192.168.1.1`~~ —
+   **korrigiert am 22.08.2026:** Sie vergibt aus `192.168.0.10` und ist der
+   DHCP-Server ihres eigenen Netzes; die Adresse steht im Lease und muss nicht
+   geraten werden. Trotzdem gilt die Warnung: Liegt das Heimnetz auf demselben
+   Bereich, gehen Routen kaputt. Bei Variante C den Router-LAN vorher
+   verschieben (GL.iNet-Voreinstellung `192.168.8.1` ist gut).
+2. **WPA3-SAE.** ~~Nikon gibt WPA3-SAE an.~~ **Korrigiert am 22.08.2026:** Am
+   Gerät abgelesen läuft der Access Point mit **WPA2-PSK**; das Menü bietet
+   offen, WPA2-PSK-AES, WPA3-SAE und gemischt zur Wahl. Ältere Adapter genügen
+   damit. Wer auf Nummer sicher gehen will, achtet trotzdem auf einen Chipsatz
+   mit `mac80211`-Treiber im Mainline-Kernel (MediaTek MT7601/MT7612, Realtek
+   RTL8188EU/RTL8812AU) und `wpa_supplicant` ≥ 2.10. 2,4 GHz genügt — die Kamera
    ist 802.11 b/g/n.
 3. **Metrik/Default-Route.** Bei zwei WLANs will NetworkManager gern die
    Kamera-Verbindung zur Default-Route machen; dann ist das Internet weg, obwohl
@@ -103,7 +125,7 @@ während der Rest noch offen ist.
 **Du:** Kamera in den Fernsteuerungsmodus, Rechner ins Kamera-WLAN, dann:
 ```bash
 skyshutter probe
-skyshutter --host 192.168.1.1 probe --ports 15740 80 8080 443 49152 5000
+skyshutter --host 192.168.0.10 probe --ports 15740 80 8080 443 49152 5000
 ```
 Ausgabe pasten. Mehr nicht.
 **Ich:** Auswerten und den nächsten Schritt bestimmen.
@@ -121,7 +143,7 @@ Ausgabe pasten. Mehr nicht.
 **Du:** Mitschnitt, während SnapBridge fernsteuert (Details in
 [reverse-engineering.md](reverse-engineering.md)) — auf dem GL-X3000:
 ```bash
-tcpdump -i br-lan -s 0 -w /tmp/coolpix.pcap host 192.168.1.1
+tcpdump -i br-lan -s 0 -w /tmp/coolpix.pcap host 192.168.0.10
 ```
 Datei bereitstellen.
 **Ich:** pcap in Python zerlegen (den Decoder baue ich, siehe Abschnitt 6) und das
@@ -195,7 +217,7 @@ Phase 3 steht.
 
 | Projekt | Wie genau | Lizenz |
 |---|---|---|
-| **libgphoto2** | Referenz für PTP/IP-Rahmenformat und Opcode-Bedeutungen; außerdem als unabhängige Gegenprobe: `gphoto2 --port ptpip:192.168.1.1 --summary` | LGPL-2.1 — **kein Code und keine Tabellen 1:1 übernehmen**, siehe Abschnitt 5 |
+| **libgphoto2** | Referenz für PTP/IP-Rahmenformat und Opcode-Bedeutungen; außerdem als unabhängige Gegenprobe: `gphoto2 --port ptpip:192.168.0.10 --summary` | LGPL-2.1 — **kein Code und keine Tabellen 1:1 übernehmen**, siehe Abschnitt 5 |
 | **gkoh/furble** | Sofortiger BLE-Auslöser (Phase 0); dessen RE-Notizen beschreiben die ML-L7-Charakteristiken | GPL |
 | **hurui200320/nsg** | Vorlage für den SnapBridge-BLE-Handshake in Phase 5 | prüfen vor Verwendung |
 | **HowenXu/snapbridge-id-extractor** | Rekonstruktion der DeviceID/GUID, damit wir neben SnapBridge koexistieren | prüfen vor Verwendung |
