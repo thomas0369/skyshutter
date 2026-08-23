@@ -14,7 +14,12 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 SKYSHUTTER=${SKYSHUTTER:-.venv/bin/skyshutter}
-CAMERA_HOST=${CAMERA_HOST:-192.168.1.1}   # override to dry-run against the simulator
+# Measured 22.08.2026 off the camera's own screen: it hands out addresses from
+# 192.168.0.10 and is the DHCP server of its own network. 192.168.1.1 -- the
+# guess this script started with -- is wrong for this model and happens to be
+# the home gateway here, so it was doubly unsuitable.
+# Override to dry-run against the simulator: CAMERA_HOST=127.0.0.1
+CAMERA_HOST=${CAMERA_HOST:-192.168.0.10}
 WAIT_FOR_SWITCH=${WAIT_FOR_SWITCH:-300}   # seconds to wait for the camera network
 WAIT_FOR_RETURN=${WAIT_FOR_RETURN:-600}   # seconds to wait for the home network
 NETSH=/mnt/c/Windows/System32/netsh.exe

@@ -127,22 +127,84 @@ tools/            Werkzeuge für die Messung an echter Hardware
   pair.sh         der Kopplungsablauf als Kommandoblock
 ```
 
-Die beiden Transporte teilen sich eine Schnittstelle: Alles oberhalb von
-`transaction()` — Vendor-Ebene, Livebild-Server, Kommandozeile — läuft
-unverändert über Kabel wie über Funk.
+### Wie die Teile zusammenhängen
+
+```
+   cli.py            mjpeg.py              tools/*.py
+      │                  │                     │
+      └────────┬─────────┘                     │  Bluetooth, nur Windows
+               │                               │  (koppeln, WLAN starten)
+           nikon.py          ble.py ───────────┘
+      Zoom · Auslöser · Live View       gemessene Characteristics
+               │
+      ┌────────┴────────┐        beide bieten transaction()
+   ptpip.py         ptpusb.py
+   TCP 15740        USB-Bulk
+      │                 │
+      └────────┬────────┘
+            ptp.py
+   Opcodes · DeviceInfo · Fehlercodes
+```
+
+**Der Angelpunkt ist `transaction()`.** Beide Transporte bieten dieselbe
+Methode, und alles darüber — Vendor-Ebene, Livebild-Server, Kommandozeile —
+kennt den Unterschied zwischen Kabel und Funk nicht. Ein dritter Transport
+bräuchte nur diese eine Methode.
+
+`ble.py` steht bewusst daneben statt darunter: Bluetooth trägt keine
+PTP-Operationen, sondern koppelt und schaltet das WLAN ein. Beide Wege treffen
+sich erst in der Kamera.
+
+Zwei Regeln, die im Code sichtbar sind: **Jede Methode prüft
+`operations_supported`, bevor sie eine Vendor-Operation absetzt** — was die
+Kamera nicht anbietet, wird nicht gesendet. Und **der Simulator bildet die
+Messung ab, nicht das Wünschenswerte**; er meldet dieselben Operationen wie die
+echte Kamera, samt ihrer Eigenheiten.
 
 ## Dokumentation
+
+**Wer das Projekt übernimmt, liest in dieser Reihenfolge:**
+
+1. [referenz.md](docs/referenz.md) — was die Kamera kann. Jeder Abschnitt sagt,
+   ob er gemessen oder aus dem Herstellercode gelesen ist.
+2. [FINDINGS.md](docs/FINDINGS.md) — der Stand-Block ganz oben nennt das
+   aktuelle Gate und den nächsten Schritt.
+3. [tools/README.md](tools/README.md) — falls eine Kamera zur Hand ist. Die
+   Bluetooth-Werkzeuge laufen nur unter Windows.
+4. [playbook.md](docs/playbook.md) — wie hier gearbeitet wird, und was man an
+   echter Hardware **nicht** tut.
 
 | Datei | Inhalt |
 |---|---|
 | [referenz.md](docs/referenz.md) | **Nachschlagewerk** — was die Kamera kann, mit Herkunftsangabe |
-| [FINDINGS.md](docs/FINDINGS.md) | Messprotokoll, chronologisch |
-| [pairing.md](docs/pairing.md) | Kopplung: Ablauf und Fallstricke |
+| [FINDINGS.md](docs/FINDINGS.md) | Messprotokoll, chronologisch, mit „Widerlegtes" |
+| [tools/README.md](tools/README.md) | die Werkzeuge: Plattform, Reihenfolge, Sicherheitsregeln |
+| [pairing.md](docs/pairing.md) | Kopplung: Ablauf und sechs Fallstricke |
 | [protokoll.md](docs/protokoll.md) | PTP/IP-Referenz |
-| [plan.md](docs/plan.md) | Phasenplan |
+| [plan.md](docs/plan.md) | Phasenplan mit Stand |
 | [playbook.md](docs/playbook.md) | Arbeitsweise, Sicherheitsregeln |
-| [recherche.md](docs/recherche.md) | Stand der Technik |
+| [recherche.md](docs/recherche.md) | Stand der Technik, was andere schon versucht haben |
 | [setup-wsl-glinet.md](docs/setup-wsl-glinet.md) | Laboraufbau |
+
+### Konventionen
+
+- **Nichts steht hier, weil es plausibel ist** — jede Aussage über die Hardware
+  ist gemessen oder als unbelegt gekennzeichnet.
+- **Widerlegtes wird nicht gelöscht**, sondern durchgestrichen und begründet.
+  Ein Irrweg, den man zweimal geht, kostet doppelt.
+- Dokumentation auf Deutsch, Code und Commits auf Englisch.
+
+### Zu `captures/`
+
+Dort liegt ein verschlüsseltes Archiv mit Bluetooth-Mitschnitten. **Die
+Passphrase liegt bewusst nicht im Repository** — die Rohdaten enthalten SSID,
+WLAN-Passphrase, Kopplungskennung und Seriennummer eines realen Geräts.
+
+Alles, was daraus an Protokollwissen gewonnen wurde, steht geschwärzt in
+[referenz.md](docs/referenz.md) und [FINDINGS.md](docs/FINDINGS.md). Das Archiv
+ist Beleg, keine Voraussetzung: Wer das Projekt übernimmt, braucht es nicht.
+`.gitignore` lässt in `captures/` ausschließlich `*.gpg` durch, damit
+Klartext-Mitschnitte gar nicht erst versehentlich hineinrutschen.
 
 ## Entwicklung
 

@@ -15,6 +15,26 @@ dependencies = []
 dev = ["pytest>=8", "ruff>=0.6"]
 sim = ["pillow>=10"]
 
+# The client itself needs nothing beyond the standard library. These are for
+# the bench tools in tools/ -- see tools/README.md for which needs what.
+usb = ["pyusb>=1.2"]
+ble = ["bleak>=0.22", "pycryptodome>=3.20"]
+# Windows only: the BLE tools drive the WinRT stack directly, because WSL has
+# no Bluetooth access at all. Install these under the *Windows* Python.
+windows = [
+    "bleak>=0.22",
+    "pycryptodome>=3.20",
+    "winrt-runtime>=2.0",
+    "winrt-Windows.Devices.Bluetooth>=2.0",
+    "winrt-Windows.Devices.Bluetooth.GenericAttributeProfile>=2.0",
+    "winrt-Windows.Devices.Bluetooth.Rfcomm>=2.0",
+    "winrt-Windows.Devices.Enumeration>=2.0",
+    "winrt-Windows.Devices.Radios>=2.0",
+    "winrt-Windows.Foundation>=2.0",
+    "winrt-Windows.Networking.Sockets>=2.0",
+    "winrt-Windows.Storage.Streams>=2.0",
+]
+
 [project.scripts]
 skyshutter = "skyshutter.cli:main"
 skyshutter-sim = "skyshutter.simulator:main"
