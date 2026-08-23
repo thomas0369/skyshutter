@@ -263,14 +263,23 @@ def open_hci_user_channel(dev: int) -> socket.socket:
     sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
     import subprocess
 
-    down = subprocess.run(["hciconfig", f"hci{dev}", "down"], capture_output=True, timeout=10)
-    if down.returncode != 0 and b"no such device" not in down.stderr.lower():
-        print(f"radar: hciconfig down meldet: {down.stderr.decode().strip()}")
+    # The USER channel binds only while the adapter is DOWN (measured; EBUSY
+    # otherwise). At boot the UART firmware may not be ready yet, so the down
+    # can silently fail -- retry the whole dance until it really binds.
     libc = ctypes.CDLL(None, use_errno=True)
     addr = SockaddrHci(socket.AF_BLUETOOTH, dev, 1)  # 1 = HCI_CHANNEL_USER
-    rc = libc.bind(sock.fileno(), ctypes.byref(addr), ctypes.sizeof(addr))
-    if rc != 0:
-        err = ctypes.get_errno()
+    bound = False
+    last_err = 0
+    for _ in range(10):
+        subprocess.run(["hciconfig", f"hci{dev}", "down"], capture_output=True, timeout=10)
+        time.sleep(1.0)
+        rc = libc.bind(sock.fileno(), ctypes.byref(addr), ctypes.sizeof(addr))
+        if rc == 0:
+            bound = True
+            break
+        last_err = ctypes.get_errno()
+    if not bound:
+        err = last_err
         sock.close()
         print(
             f"radar: USER-Kanal fuer hci{dev} nicht verfuegbar (bind errno {err}).\n"
@@ -316,7 +325,17 @@ def main() -> int:
             f"auf hci{args.device}",
             flush=True,
         )
+        # watchdog: a bound-but-dead adapter produces eternal silence; die
+        # loudly and let systemd restart us into a fresh bind
+        first_event_deadline = time.monotonic() + 120
         while True:
+            if events == 0 and time.monotonic() > first_event_deadline:
+                print(
+                    f"{time.strftime('%H:%M:%S')}  WATCHDOG: 120 s ohne jedes "
+                    f"Event -- Adapter tot? Neustart.",
+                    flush=True,
+                )
+                return 3
             pkt = sock.recv(4096)
             if not pkt or pkt[0] != HCI_EVENT_PKT:
                 continue
