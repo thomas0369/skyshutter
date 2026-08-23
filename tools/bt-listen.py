@@ -112,7 +112,6 @@ def parse_ad(data: bytes) -> dict:
             break
         ad_type = data[off + 1]
         payload = data[off + 2 : off + 1 + ln]
-        name = AD_TYPE_NAMES.get(ad_type, f"type-0x{ad_type:02x}")
         if ad_type in (0x08, 0x09):
             try:
                 out["names"].append(payload.decode("utf-8", "replace"))
@@ -219,7 +218,6 @@ def main() -> int:
         return 1
 
     last_sig: dict[tuple, float] = {}
-    nik_last = 0.0
     events = 0
     devices: dict[str, dict] = {}
     started = time.monotonic()
