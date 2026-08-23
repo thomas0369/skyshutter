@@ -239,15 +239,38 @@ def stop_scan(sock: socket.socket) -> None:
         pass
 
 
+def open_hci_user_channel(dev: int) -> socket.socket:
+    """Bind the exclusive HCI USER channel.
+
+    The kernel vetoes raw scan commands while BlueZ owns the adapter via mgmt
+    (measured: 'Set scan parameters failed: Operation not permitted', for
+    hcitool and for us alike). The USER channel bypasses kernel and BlueZ
+    entirely -- requirement: bluetooth.service must be stopped. As a side
+    effect NOTHING else can use the radio while the radar runs: the strongest
+    possible form of "send nothing".
+    """
+    sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
+    try:
+        sock.bind((dev, 1))  # 1 = HCI_CHANNEL_USER
+    except (OSError, TypeError) as exc:
+        sock.close()
+        print(
+            f"radar: USER-Kanal fuer hci{dev} nicht verfuegbar ({exc}).\n"
+            "  Bluetooth-Dienst stoppen: sudo systemctl stop bluetooth",
+            file=sys.stderr,
+        )
+        raise SystemExit(2) from exc
+    return sock
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     p.add_argument("--device", type=int, default=0, help="HCI device index")
     args = p.parse_args()
 
     try:
-        sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
-        sock.bind((args.device,))
-    except (OSError, PermissionError) as exc:
+        sock = open_hci_user_channel(args.device)
+    except PermissionError as exc:
         print(f"radar: kein Zugriff auf hci{args.device}: {exc}", file=sys.stderr)
         return 1
 
