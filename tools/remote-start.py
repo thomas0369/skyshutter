@@ -201,12 +201,12 @@ async def run(args) -> int:
                 gw = wlan_gateway(creds.ssid)
                 log(f"  WLAN verbunden mit {creds.ssid!r}  Kamera-IP≈{gw or '?'}")
                 break
-            if creds and not args.join and visible:
-                log(f"  AP sichtbar: {creds.ssid!r}")
-                break
+            # Do NOT break when the SSID becomes visible: dropping BLE here also
+            # drops the camera AP before an external client (e.g. the Mango
+            # repeater) can join. Hold the whole duration to keep the AP up.
             elapsed = args.hold - (deadline - time.monotonic())
             log(f"  +{elapsed:.0f}s: SSID {'im Scan' if visible else 'versteckt'}"
-                f"{'; Join-Versuch...' if args.join else ''}")
+                f"{'; Join-Versuch...' if args.join else '; halte AP (fuer Mango)'}")
             await asyncio.sleep(3.0)
         if not client.is_connected:
             log("  ! BLE getrennt (Kamera schaltet auf Funk um -- kann normal sein)")
