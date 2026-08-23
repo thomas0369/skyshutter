@@ -511,7 +511,7 @@ def main() -> int:
     p.add_argument(
         "--wait-for-ad",
         action="store_true",
-        help="wait for the ble-watch scanner's fresh sighting instead of gambling on a one-shot scan",
+        help="wait for the ble-watch scanner's fresh sighting instead of a one-shot scan",
     )
     p.add_argument("--device", help="reconnect with a known client device id (hex)")
     p.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
