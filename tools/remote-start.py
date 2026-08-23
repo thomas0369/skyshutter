@@ -178,45 +178,129 @@ async def run(args) -> int:
         elif lssec is None:
             log("  (lssec nicht importierbar -- Zugangsdaten nicht entschlüsselt)")
 
+        # The credentials must be ready BEFORE establishment so we can join the
+        # AP inside its short live window (it drops if no client joins in time).
+        if creds and args.join:
+            add_wifi_profile(creds.ssid, creds.password)
+
         log("Stage 4: establishment (WiFi)")
         await client.write_gatt_char(ESTABLISH, b"\x01", response=True)
         log("  0x2005 <- 01 (WiFi) accepted")
 
-        # Hold the link and watch for the access point.
+        # The AP is likely WiFi-Direct / a hidden SSID (never seen in a plain
+        # scan), so don't wait to *see* it -- attempt the join right away, in a
+        # tight loop, while BLE is still held.
         deadline = time.monotonic() + args.hold
-        ap_up = False
-        while time.monotonic() < deadline and client.is_connected:
-            await asyncio.sleep(5.0)
-            if creds and scan_wifi_for(creds.ssid):
-                ap_up = True
+        joined = False
+        while time.monotonic() < deadline:
+            if creds and args.join:
+                if try_join(creds.ssid):
+                    joined = True
+                    gw = wlan_gateway(creds.ssid)
+                    log(f"  WLAN verbunden mit {creds.ssid!r}  Kamera-IP≈{gw or '?'}")
+                    break
+            elif creds and scan_wifi_for(creds.ssid):
                 log(f"  AP sichtbar: {creds.ssid!r}")
                 break
-            log(f"  +{args.hold - (deadline - time.monotonic()):.0f}s: AP noch nicht sichtbar")
+            await asyncio.sleep(4.0)
+            log(f"  +{args.hold - (deadline - time.monotonic()):.0f}s: warte auf AP/Join")
         if not client.is_connected:
-            log("  ! BLE getrennt (Kamera schaltet evtl. auf Funk um -- das kann normal sein)")
+            log("  ! BLE getrennt (Kamera schaltet auf Funk um -- kann normal sein)")
 
     if not creds:
         log("Fertig (ohne Zugangsdaten -- lssec/Config prüfen).")
         return 0
-    log("")
-    log("Nächste Schritte (WLAN + Live View):")
-    log(f"  SSID     {creds.ssid}")
-    log(f"  Passwort {creds.password}")
-    log("  Beitreten (Windows):  netsh wlan connect name=<Profil>  (Profil mit SSID+PW anlegen)")
-    log("  Live View:            skyshutter liveview --host 192.168.0.1  (PTP/IP 15740)")
+
+    if args.join and joined:
+        gw = wlan_gateway(creds.ssid) or "192.168.0.1"
+        ok = ping(gw)
+        log(f"  Ping {gw}: {'erreichbar' if ok else 'keine Antwort'}")
+        log(f"  -> Live View als Nächstes: PTP/IP {gw}:15740 (OpenSession, StartLiveView 0x9201)")
+        delete_wifi_profile(creds.ssid)
+        return 0 if ok else 3
+
     if args.join:
-        return await join_and_liveview(creds)
-    if not ap_up:
-        log("  (AP war im Zeitfenster nicht sichtbar -- länger halten oder Sequenz prüfen)")
+        delete_wifi_profile(creds.ssid)
+        log("  Beitritt im Zeitfenster nicht gelungen -- AP evtl. WiFi-Direct (P2P).")
+    log("")
+    log("Zugangsdaten (manueller Beitritt / Live View):")
+    log(f"  SSID {creds.ssid}  ·  PTP/IP <kamera-ip>:15740")
     return 0
 
 
-async def join_and_liveview(creds) -> int:
-    """Best-effort: join the camera AP and pull one live-view frame over PTP/IP."""
-    log("Stage 5: WiFi join + PTP/IP live view (best effort)")
-    log("  (WiFi-Join automatisiert noch nicht implementiert -- manuell beitreten,")
-    log("   dann:  python -m skyshutter liveview --host 192.168.0.1 )")
-    return 0
+def _netsh() -> str:
+    p = "/mnt/c/Windows/System32/netsh.exe"
+    return p if os.path.exists(p) else "netsh.exe"
+
+
+def _win_tmp(name: str) -> tuple[str, str]:
+    """Return (wsl_path, windows_path) for a temp file under the Windows temp dir."""
+    base = "/mnt/c/Users/thoma/AppData/Local/Temp"
+    return f"{base}/{name}", rf"C:\Users\thoma\AppData\Local\Temp\{name}"
+
+
+def add_wifi_profile(ssid: str, psk: str) -> None:
+    wsl_path, win_path = _win_tmp("skyshutter_ap.xml")
+    xml = (
+        '<?xml version="1.0"?>\n'
+        '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">\n'
+        f"  <name>{ssid}</name>\n"
+        f"  <SSIDConfig><SSID><name>{ssid}</name></SSID>"
+        "<nonBroadcast>true</nonBroadcast></SSIDConfig>\n"
+        "  <connectionType>ESS</connectionType><connectionMode>manual</connectionMode>\n"
+        "  <MSM><security>\n"
+        "    <authEncryption><authentication>WPA2PSK</authentication>"
+        "<encryption>AES</encryption><useOneX>false</useOneX></authEncryption>\n"
+        f"    <sharedKey><keyType>passPhrase</keyType><protected>false</protected>"
+        f"<keyMaterial>{psk}</keyMaterial></sharedKey>\n"
+        "  </security></MSM>\n</WLANProfile>\n"
+    )
+    with open(wsl_path, "w") as fh:
+        fh.write(xml)
+    subprocess.run([_netsh(), "wlan", "add", "profile", f"filename={win_path}"],
+                   capture_output=True, text=True, timeout=15)
+
+
+def delete_wifi_profile(ssid: str) -> None:
+    subprocess.run([_netsh(), "wlan", "delete", "profile", f"name={ssid}"],
+                   capture_output=True, text=True, timeout=15)
+    wsl_path, _ = _win_tmp("skyshutter_ap.xml")
+    try:
+        os.remove(wsl_path)
+    except OSError:
+        pass
+
+
+def try_join(ssid: str) -> bool:
+    subprocess.run([_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"],
+                   capture_output=True, text=True, timeout=15)
+    time.sleep(3)
+    out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
+                         capture_output=True, text=True, timeout=15).stdout.lower()
+    return ssid.lower() in out and ("connected" in out or "verbunden" in out)
+
+
+def _win_exe(name: str) -> str:
+    p = f"/mnt/c/Windows/System32/{name}"
+    return p if os.path.exists(p) else name
+
+
+def wlan_gateway(ssid: str) -> str | None:
+    out = subprocess.run([_win_exe("ipconfig.exe")],
+                         capture_output=True, text=True, timeout=15).stdout
+    gw = None
+    for line in out.splitlines():
+        if "gateway" in line.lower():
+            tail = line.split(":")[-1].strip()
+            if tail.count(".") == 3:
+                gw = tail
+    return gw
+
+
+def ping(host: str) -> bool:
+    r = subprocess.run([_win_exe("PING.EXE"), "-n", "2", "-w", "1500", host],
+                       capture_output=True, text=True, timeout=15)
+    return "ttl=" in r.stdout.lower()
 
 
 def main() -> int:
