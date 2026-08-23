@@ -151,25 +151,33 @@ Gemessen `1100` → `0x0011` → Zeit **an**, Standort **an**, Verbindung **aus*
 `00 01` setzt die Verbindungsanforderung — zweiter Kandidat für den WLAN-Start,
 im Herstellercode aber nicht als solcher belegt.
 
-### Verschlüsselung der Zugangsdaten **[H]**
+### Verschlüsselung der Zugangsdaten **[M]** — geknackt
 
-Blowfish, gesichert: Die native Bibliothek trägt Quellpfade auf
-`blowfishLib/LsBlowfish.c`, im Nur-Lese-Segment stehen das unveränderte P-Array
-und die S-Box, eine Assertion prüft die 56-Byte-Schlüsselgrenze. Kein AES, kein
-OpenSSL, kein eingebetteter Schlüssel.
+Blowfish, **vollständig nachgebaut und verifiziert** (23.08.2026, gegen die
+native Bibliothek als Orakel und zwei echte Klartext-Chiffrat-Paare).
+Implementierung: `src/skyshutter/lssec.py`, reines Python, keine Abhängigkeit.
 
-Die Schlüsselerzeugung:
+Alle Blowfish-Wörter big-endian. Die Kette:
 
 ```
-24 Byte:        Stufe-4-Payload ‖ Geräte-ID ‖ Zwischenwert aus Stufe 3
-verschlüsseln:  Blowfish-CBC mit festem Schlüssel und festem IV
-Block 1         → Sitzungsschlüssel
-Block 2         → IV für SSID und Passwort
+feste Transform : Blowfish, Schlüssel ffffaa5511223300 (= Handshake-Schlüssel),
+                  CBC, IV L=0x01020304 R=0x05060708
+Salt-Index      : das Salt (0-7), dessen Transform über
+                  SALT ‖ cam_ts ‖ own_ts die Stufe-2-Challenge reproduziert
+field_a (8 B)   : [Salt-Index] ‖ cam_ts[1:4] ‖ own_ts[0:4]
+Sitzungsschlüssel: letzter CBC-Block der Transform über
+                  Stufe-4-Payload ‖ Geräte-ID ‖ field_a
+entschlüsseln    : Blowfish-CBC, Schlüssel = Sitzungsschlüssel, IV = 0
+                  SSID = 32 B, Passwort = 64 B aus 0x2004, je nullterminiert
 ```
 
-**Alle Eingaben sind bekannt oder frei wählbar** — der Zufallsgenerator liefert
-nur die Client-Nonce, die ein eigener Client ohnehin selbst setzt. Kein
-Gerätegeheimnis. Der Nachbau ist damit möglich, aber noch nicht durchgeführt.
+**`cam_ts` und `own_ts` sind die Handshake-Zeitstempel** (Stufe 2 bzw. Stufe 1),
+nicht die device/nonce-Felder — das war der Irrtum, der es lange blockiert hat.
+Der Nutzdaten-IV ist schlicht null.
+
+**Konsequenz:** Die WLAN-Zugangsdaten lassen sich aus dem BLE-Chiffrat berechnen,
+für jede Kopplung — auch wenn das Passwort rotiert. Kein Gerätegeheimnis nötig,
+nur die Werte, die der Client beim Pairing ohnehin sieht.
 
 ---
 

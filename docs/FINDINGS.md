@@ -26,9 +26,9 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Phase** | 1 abgeschlossen — **PTP ist bestätigt**, Live View existiert. Phase 2: das Bild holen |
 | **Erreicht** | 38 Operationen und 20 Properties gemessen · Kopplung reproduzierbar in 40 s · zweiter Transport (USB) im Repo · Protokoll der Hersteller-App gelesen |
 | **Offenes Gate** | `0x01` auf `0x2005` **startet den AP nicht allein** (23.08. gemessen). Was fehlt noch zum AP-Start? |
-| **Fehlende Messung** | Rotiert das WLAN-Passwort? Davon hängt ab, ob wir die Entschlüsselung brauchen |
-| **Nächster Schritt** | Passwort-Rotation prüfen (SnapBridge AP starten, ablesen, Kamera aus/an, erneut, vergleichen) |
-| **Danach** | Wenn stabil: WLAN-Zugang mit abgelesenem Passwort. Wenn rotierend: LsSec-Orakel bauen (drei Wege in der Messung unten) |
+| **Erreicht 23.08.** | **LsSec geknackt** — WLAN-Zugangsdaten aus dem BLE-Chiffrat in reinem Python entschlüsselbar, gegen zwei Paare verifiziert |
+| **Nächster Schritt** | `src/skyshutter/lssec.py` sauber bauen (eigener Blowfish, stdlib-only, synthetischer Test) |
+| **Danach** | AP-Start klären: `0x01` auf `0x2005` genügt nicht allein — was fehlt? |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-23 |
 
@@ -83,12 +83,12 @@ oft mehr wert als die Frage.
       die Adresse steht im Lease. Voreinstellung `192.168.0.10`.
 - [x] **Kann man über Bluetooth auslösen?** Nein. Feature-Bit 11 ist null, und
       die dafür nötigen Characteristics fehlen.
-- [x] **Wie sind die WLAN-Zugangsdaten geschützt?** Blowfish-CBC, Algorithmus
-      vollständig verstanden (Messung 23.08., unten). **Aber der Nachbau aus
-      geloggten Werten ist blockiert:** der Sitzungsschlüssel hängt von zwei
-      rein nativen Zwischenwerten ab (`fieldA`, Nutzdaten-IV), die nicht in den
-      BLE-Nachrichten stehen. Die frühere Annahme „aus BLE-Werten ableitbar"
-      ist damit widerlegt.
+- [x] **Wie sind die WLAN-Zugangsdaten geschützt, und lassen sie sich lesen?**
+      Blowfish-CBC, **vollständig geknackt am 23.08.** Der Sitzungsschlüssel
+      leitet sich aus den Handshake-**Zeitstempeln** ab (nicht device/nonce, das
+      war der frühere Irrtum), der Nutzdaten-IV ist null. In reinem Python
+      nachgebaut und gegen zwei Klartext-Chiffrat-Paare verifiziert. Details in
+      der Messung unten.
 - [ ] **Rotiert das WLAN-Passwort zwischen zwei Verbindungen?** Entscheidet, ob
       die Entschlüsselung überhaupt gebraucht wird. Ungeprüft.
 
@@ -133,7 +133,51 @@ Folge:      Widerlegt-Eintrag zu `0x2005` bleibt bestehen und wird präzisiert:
             der Schreibzugriff wird angenommen, startet den AP aber nicht allein.
             `ble-probe.py` bekam `--give-up` (Zeitlimit) und `--hold`.
 
-### 23.08.2026 — LsSec-Verschlüsselung vollständig analysiert, Nachbau blockiert
+### 23.08.2026 — LsSec geknackt: WLAN-Zugangsdaten in reinem Python entschlüsselbar
+Kommando:   Disassemblat von `LsSec1stStage`/`Stage3rd`/`GenerateKey`/`transform`
+            (capstone, ARM64), Bibliothek zusätzlich per ctypes als Orakel
+            ausgeführt, beides gegen zwei Klartext-Chiffrat-Paare geprüft.
+Aufbau:     Werkzeugbank, kein Kamerazugriff. Die native `.so` läuft auf dem
+            aarch64-WSL über ein winziges `libc.so`-Shim (acht bionic-Symbole).
+Ergebnis:   **Beide Paare entschlüsseln korrekt — SSID und Passwort im
+            Klartext.** Verifiziert über die Original-Bibliothek *und* einen
+            unabhängigen reinen Python-Nachbau; beide liefern denselben
+            Sitzungsschlüssel.
+
+            **Der Fehler aller früheren Versuche:** In die Ableitung gehen die
+            **Zeitstempel** der Handshake-Nachrichten ein, nicht die
+            device/nonce-Felder. Das war die ganze Zeit die falsche Annahme.
+
+            Die vollständige, verifizierte Kette (alle Blowfish-Wörter
+            big-endian):
+
+            1. **Feste Transform** = Blowfish, Schlüssel `ffffaa5511223300`
+               (identisch mit dem Handshake), CBC, IV `L=0x01020304
+               R=0x05060708`. Der Schlüsselplan lässt sich zur Laufzeit aus dem
+               Schlüssel rechnen — keine `.so` nötig.
+            2. **fieldA** (8 B) = `[0x01] ‖ cam_ts[1:4] ‖ our_ts[0:4]` —
+               Kamera-Zeitstempel (Stufe 2) und eigener Zeitstempel (Stufe 1),
+               erstes Byte auf `0x01` gesetzt.
+            3. **Sitzungsschlüssel** = **letzter** CBC-Block (CBC-MAC) der
+               festen Transform über `stage4Payload ‖ deviceID ‖ fieldA`.
+               `stage4Payload` = die 8-Byte-Nutzlast aus Stufe 4, `deviceID` =
+               die 8 Byte, die der Client in Stufe 1 sendet.
+            4. **Entschlüsselung** = Blowfish-CBC mit dem Sitzungsschlüssel und
+               **IV = 0** (aus dem Kontext gedumpt; der IV ist schlicht null —
+               deshalb war er nie „ableitbar"). SSID = erste 32 Byte, Passwort =
+               nächste 64 Byte von `0x2004`, je nullterminiert.
+
+            **Zwei Wege, beide funktionieren:** der reine Python-Nachbau
+            (`bf.py`, passt zur stdlib-Philosophie) und die Bibliothek als
+            ctypes-Orakel (nützlich als Referenz und zum Kalibrieren).
+Folge:      Die WLAN-Zugangsdaten lassen sich aus dem BLE-Chiffrat berechnen —
+            **für jede Kopplung, auch bei rotierendem Passwort.** Damit ist der
+            volle automatische WLAN-Zugang in Reichweite. Nächster Schritt:
+            sauberes `src/skyshutter/lssec.py` mit eigenem Blowfish (stdlib-only)
+            und synthetischem Testvektor (keine echten Gerätedaten im Repo).
+            Arbeitsstand in `/tmp/lssec`, nicht im Repo (enthält Klartext-Paare).
+
+### 23.08.2026 — LsSec-Verschlüsselung: Struktur analysiert (Vorstufe zum Knacken)
 Kommando:   Statische Analyse von `libLsSec-jni.so` (ARM64) mit capstone,
             plus Abgleich gegen zwei Klartext-Chiffrat-Paare aus `0x2004`.
 Aufbau:     Kein Kamerazugriff nötig — Werkzeugbank.
