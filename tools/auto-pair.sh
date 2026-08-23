@@ -58,14 +58,12 @@ while true; do
     log "  registriert, LE getrennt; 3 s warten (Kamera oeffnet Classic-Seite)"
     sleep 3
 
-    bluetoothctl scan on >/dev/null 2>&1 &
-    FOUND=""
-    for i in $(seq 1 15); do
-        bluetoothctl devices 2>/dev/null | grep -qi "$CAM" && { FOUND=1; break; }
-        sleep 2
-    done
-    if [ -z "$FOUND" ]; then
-        log "  $CAM nicht im Inquiry"
+    # live scan, NOT the device cache: `bluetoothctl devices` also lists stale
+    # sightings, which once sent a pair into 30 s of radio silence (display
+    # had left the menu already -- measured 00:00, FINDINGS)
+    HIT=$(timeout 22 bluetoothctl scan on 2>&1 | grep -m1 "$CAM")
+    if [ -z "$HIT" ]; then
+        log "  $CAM nicht live im Inquiry"
         FAILS=$((FAILS + 1))
         continue
     fi
