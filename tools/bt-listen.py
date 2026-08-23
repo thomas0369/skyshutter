@@ -261,6 +261,11 @@ def open_hci_user_channel(dev: int) -> socket.socket:
         ]
 
     sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
+    import subprocess
+
+    down = subprocess.run(["hciconfig", f"hci{dev}", "down"], capture_output=True, timeout=10)
+    if down.returncode != 0 and b"no such device" not in down.stderr.lower():
+        print(f"radar: hciconfig down meldet: {down.stderr.decode().strip()}")
     libc = ctypes.CDLL(None, use_errno=True)
     addr = SockaddrHci(socket.AF_BLUETOOTH, dev, 1)  # 1 = HCI_CHANNEL_USER
     rc = libc.bind(sock.fileno(), ctypes.byref(addr), ctypes.sizeof(addr))
