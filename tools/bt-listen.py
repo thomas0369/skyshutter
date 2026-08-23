@@ -198,6 +198,40 @@ def start_passive_scan(sock: socket.socket) -> None:
     hci_command(sock, SCAN_ENABLE_OPCODE, struct.pack("<BB", 0x01, 0x00))
 
 
+def cmd_status_name(status: int) -> str:
+    names = {
+        0x00: "SUCCESS",
+        0x01: "UNKNOWN_CMD",
+        0x0C: "CMD_DISALLOWED",
+        0x11: "UNSUPPORTED",
+        0x12: "INVALID_PARAMS",
+        0x22: "CMD_PENDING",
+    }
+    return names.get(status, f"0x{status:02x}")
+
+
+def wait_cmd_complete(sock: socket.socket, opcode: int, timeout: float = 3.0) -> int | None:
+    """Read events until the Command Complete for opcode arrives (or timeout)."""
+    deadline = time.monotonic() + timeout
+    sock.settimeout(max(0.1, deadline - time.monotonic()))
+    while time.monotonic() < deadline:
+        try:
+            pkt = sock.recv(4096)
+        except (socket.timeout, OSError):
+            break
+        if not pkt or pkt[0] != HCI_EVENT_PKT:
+            continue
+        if pkt[1] == EVT_CMD_STATUS and len(pkt) >= 7:
+            rcv_op = struct.unpack("<H", pkt[4:6])[0]
+            if rcv_op == opcode:
+                return pkt[3]
+        if pkt[1] == EVT_CMD_COMPLETE and len(pkt) >= 7:
+            rcv_op = struct.unpack("<H", pkt[4:6])[0]
+            if rcv_op == opcode:
+                return pkt[7]
+    return None
+
+
 def stop_scan(sock: socket.socket) -> None:
     try:
         hci_command(sock, SCAN_ENABLE_OPCODE, struct.pack("<BB", 0x00, 0x00))
@@ -225,6 +259,17 @@ def main() -> int:
 
     try:
         start_passive_scan(sock)
+        for label, opcode in (
+            ("scan-params", SCAN_PARAMS_OPCODE),
+            ("scan-enable", SCAN_ENABLE_OPCODE),
+        ):
+            st = wait_cmd_complete(sock, opcode)
+            print(
+                f"{time.strftime('%H:%M:%S')}  {label}: "
+                f"{cmd_status_name(st) if st is not None else 'keine Antwort'}",
+                flush=True,
+            )
+        sock.settimeout(None)
         print(
             f"{time.strftime('%H:%M:%S')}  radar aktiv (PASSIV, sendet nichts) "
             f"auf hci{args.device}",
