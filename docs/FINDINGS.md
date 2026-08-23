@@ -27,12 +27,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert (BlueZ-Bond via bluetoothctl, nmcli-Join auf wlan0) und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang: WAN→Heimnetz (192.168.1.143), LAN→Raspberry (192.168.3.178 per DHCP), Port-Forward 2222→Raspberry:22; alter camjoin/procd-Watcher entfernt, repeater-uci P1100-Eintrag gelöscht, defekter GL-VPN-Firewall-Include deaktiviert (fw4-Reset lädt jetzt sauber). |
-| **Offenes Gate** | **Classic-Bond am Raspberry.** BLE-Handshake läuft am Raspberry sauber (auth in 9 s), aber die Kamera lehnt das Pairing ab (Falle 5a: zu viele Versuche, Funkruhe nötig). Classic-Adresse rotiert pro Aufwach-Zyklus → dynamisch greifen (fullpair2.sh tut das). Agent braucht DisplayYesNo (steht). Danach: `remote-start --join --hold` → nmcli-Join auf wlan0 → `liveview --host 192.168.0.10` — alles vorbereitet. |
-| **Nächster Schritt** | Kommandoblock „erster Hardware-Lauf" (unten, Messung 23.08. Feld-Rig) ausführen, sobald die Kamera griffbereit ist. Danach: AZ-GTi anbinden (FTDI bevorzugt; WLAN-Fallback über Mango-Repeater braucht SSID+PSK vom Mount — Thomas muss die vom AZ-GTi-Display ablesen, stehen nirgends dokumentiert). |
+| **Offenes Gate** | **Classic-Bond am Raspberry.** Die Kette ist gemessen intakt (btmon: Connect + SSP-Handshake; Code 240078 erschien am Display, 24.08. 01:11) — die Kamera verweigert nach zu vielen Versuchen (Falle 5a). bt-pair.py jetzt 1:1 zur Windows-Referenz: Retry-Loop (3×, 2 s Pause) + Fallback (RemoveDevice → Inquiry → Pair). Agent braucht DisplayYesNo (steht, läuft). Danach: `remote-start --join --hold` → nmcli-Join auf wlan0 → `liveview --host 192.168.0.10` — alles vorbereitet. |
+| **Nächster Schritt** | 1) Funk-Reset des Raspberry-Stacks (hci0 down/up + bluetooth restart — entspricht Windows' pair.sh). 2) Thomas: Verbindungsmenü öffnen, frische Sichtung abwarten (`ble-watch.py status`). 3) EIN sauberer Lauf: Handshake → trennen → `hcitool inq` (Klasse 080620) → `bt-pair.py` (jetzt mit Retry+Fallback) → Thomas OK am Display → BOND_OK. Bei Verweigerung: 6 h Funkruhe (bt-listen an), morgen ein Versuch. Danach: AZ-GTi anbinden (FTDI bevorzugt; WLAN-Fallback braucht SSID+PSK vom Mount — Thomas muss die ablesen, stehen nirgends dokumentiert). |
 | **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-23 (Abend) |
+| **Stand vom** | 2026-08-24 (Nacht II) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -99,6 +99,33 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 24.08.2026 (Nacht II) — Kette funktioniert: Code erschien am Display; bt-pair.py jetzt 1:1 zur Windows-Referenz
+Aufbau:     btmon-Mitschnitt während der Pairing-Versuche; danach Analyse der
+            Windows-Referenz `tools/classic-pair.py` im Repo. Nachgetragen
+            24.08. aus der Session um 01:11.
+Belegt:     - **`bluetoothctl pair` sabotiert sich selbst**: es registriert
+              einen eigenen Session-Agent, der bei geschlossenem stdin die
+              SSP-Bestätigung in ~2 ms auto-ablehnt → AuthenticationFailed,
+              unser DisplayYesNo-Agent wird nie gefragt. Direkter D-Bus-Aufruf
+              `Device1.Pair()` umgeht das (→ `tools/bt-pair.py`).
+            - **Classic-Connect + SSP-Handshake funktionieren** (btmon: Create
+              Connection → Connect Complete, IO Capability Exchange
+              DisplayYesNo). Um 01:11 erschien der Code **240078** am
+              Kamera-Display — die Kette steht, die Kamera verweigerte danach
+              (Erschöpfung, Falle 5a nach vielen Versuchen der Nacht).
+            - **Die Windows-Referenz paart nie nur einmal**: 3 Versuche mit
+              2 s Pause, danach Fallback auf die Windows-Standard-
+              Routine (`classic-pair.py` 226–251). Unser bt-pair.py machte
+              EINEN Pair()-Aufruf. Jetzt nachgezogen: Retry-Loop
+              (Standard 3×, 2 s Pause) + Fallback (RemoveDevice → Inquiry →
+              Pair auf frischem Objekt).
+            - Kamera nach Neustart (Nutzer-Option 1): kein Advertising
+              (Sichtung driftete 858 → 1086 s alt); Vorbereitung sauber
+              (pair-agent + ble-watch aktiv, 0 gepairte Devices).
+Folgt:      Funk-Reset des Raspberry-Stacks (hci0 down/up + bluetooth restart —
+            das, was Windows' pair.sh vor jedem Lauf tut) und EIN sauberer
+            Lauf mit der erweiterten bt-pair.py.
 
 ### 24.08.2026 (Nacht) — Passiver Bluetooth-Radar aktiv: Der Raspberry sendet jetzt NICHTS mehr
 Aufbau:     `tools/bt-listen.py` als root-Systemdienst (`bt-listen.service`) auf dem
