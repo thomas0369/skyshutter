@@ -233,14 +233,14 @@ def _netsh() -> str:
     return p if os.path.exists(p) else "netsh.exe"
 
 
-def _win_tmp(name: str) -> tuple[str, str]:
-    """Return (wsl_path, windows_path) for a temp file under the Windows temp dir."""
-    base = "/mnt/c/Users/thoma/AppData/Local/Temp"
-    return f"{base}/{name}", rf"C:\Users\thoma\AppData\Local\Temp\{name}"
+def _profile_path() -> str:
+    """A temp path for the WLAN profile XML, valid for the Python that runs us
+    (Windows Python -> a real C:\\...\\Temp path via tempfile)."""
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "skyshutter_ap.xml")
 
 
 def add_wifi_profile(ssid: str, psk: str) -> None:
-    wsl_path, win_path = _win_tmp("skyshutter_ap.xml")
     xml = (
         '<?xml version="1.0"?>\n'
         '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">\n'
@@ -255,18 +255,18 @@ def add_wifi_profile(ssid: str, psk: str) -> None:
         f"<keyMaterial>{psk}</keyMaterial></sharedKey>\n"
         "  </security></MSM>\n</WLANProfile>\n"
     )
-    with open(wsl_path, "w") as fh:
+    path = _profile_path()
+    with open(path, "w") as fh:
         fh.write(xml)
-    subprocess.run([_netsh(), "wlan", "add", "profile", f"filename={win_path}"],
+    subprocess.run([_netsh(), "wlan", "add", "profile", f"filename={path}"],
                    capture_output=True, text=True, timeout=15)
 
 
 def delete_wifi_profile(ssid: str) -> None:
     subprocess.run([_netsh(), "wlan", "delete", "profile", f"name={ssid}"],
                    capture_output=True, text=True, timeout=15)
-    wsl_path, _ = _win_tmp("skyshutter_ap.xml")
     try:
-        os.remove(wsl_path)
+        os.remove(_profile_path())
     except OSError:
         pass
 
