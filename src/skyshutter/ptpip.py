@@ -337,7 +337,29 @@ class PtpIpConnection:
     # -- convenience -------------------------------------------------------
 
     def open_session(self, session_id: int = 1) -> None:
-        self.transaction(OperationCode.OPEN_SESSION, (session_id,))
+        """Open a session, treating an already-open one as success.
+
+        The vendor app accepts ``SessionAlreadyOpen`` exactly like ``OK`` and
+        carries on with the id it just asked for, rather than closing and
+        reopening. Doing anything else here turns a harmless reconnect into a
+        failure.
+        """
+        result = self.transaction(
+            OperationCode.OPEN_SESSION, (session_id,), raise_on_error=False
+        )
+        if not result.ok and result.response_code != ResponseCode.SESSION_ALREADY_OPEN:
+            raise PtpError(result.response_code, OperationCode.OPEN_SESSION)
+
+    def ping(self) -> None:
+        """Send a probe over the event channel, as the vendor app does.
+
+        Measured in the app: every nine seconds, on the *event* socket, and it
+        expects the answer within ten. Answering someone else's ping is not
+        enough -- nothing else keeps the link alive.
+        """
+        if self._event is None:
+            return
+        send_packet(self._event, Packet(PacketType.PING))
 
     def close_session(self) -> None:
         self.transaction(OperationCode.CLOSE_SESSION, raise_on_error=False)

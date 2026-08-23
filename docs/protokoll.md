@@ -136,9 +136,57 @@ Properties: `5001` Batterie, `5007` Blende, **`5008` Brennweite (schreibbar,
 
 ## Live-View-Frames
 
-`GetLiveViewImg` liefert einen modellabhängigen Header vor dem JPEG (8, 128 und
-384 Bytes wurden bei verschiedenen Nikons beobachtet). `skyshutter` rät nicht,
-sondern sucht den SOI-Marker `FF D8 FF` und schneidet bis zum letzten `FF D9`.
+`GetLiveViewImg` liefert einen Header vor dem JPEG. Bei diesem Modell ist er
+**384 Byte lang und big-endian** — anders herum als der PTP-Rahmen drumherum.
+Aus der Hersteller-App gelesen, 23.08.2026:
+
+| Offset | Typ | Feld |
+|---|---|---|
+| `0x04` | u32 | JPEG-Länge (nur als Plausibilitätsprüfung, s.u.) |
+| `0x08` / `0x0A` | s16 | Bildbreite / -höhe |
+| `0x0C` / `0x0E` | s16 | Sensor-Gesamtgröße |
+| `0x10`–`0x16` | 4× s16 | sichtbarer Ausschnitt: Breite, Höhe, Mitte x, Mitte y |
+| `0x18`–`0x1E` | 4× s16 | AF-Feld, dieselben vier Werte |
+| `0x25` | s8 | Drehrichtung |
+| `0x26` / `0x27` | s8 | Fokus- und Zoomantrieb (nur Status) |
+| `0x2E` | s16 | Selbstauslöser-Restzeit |
+| `0x30` / `0x31` | s8 | Fokuszustand, Fokusfähigkeit |
+| `0x34` / `0x38` / `0x3C` | s32 | **Lagesensor: Roll, Pitch, Yaw** |
+| `0x40` | s32 | Video-Restzeit |
+| `0x46` / `0x47` | u8 | Anzahl Gesichtsfelder, aktives Feld |
+| `0x48`–`0x15F` | 35× 8 B | AF-Feld-Array |
+| `0x180` | | **JPEG** |
+
+**Belichtungswerte stehen nicht im Header** — die kommen über Properties. Einen
+Zoomfaktor gibt es auch nicht; er folgt aus Sensorgröße geteilt durch sichtbaren
+Ausschnitt.
+
+**Das Längenfeld ist unzuverlässig.** Bei Kameras, die `0x9521` anbieten — und
+diese tut es — nimmt die App stattdessen den Rest des Puffers. `skyshutter`
+schneidet deshalb 384 Byte ab und sucht im Rest den SOI-Marker `FF D8 FF` bis
+zum letzten `FF D9`. Das funktioniert auch bei den Modellen, für die 8 oder
+128 Byte berichtet wurden.
+
+### Live View starten
+
+Die App prüft der Reihe nach, bevor sie `0x9201` schickt:
+
+1. `0xD0BD` Fernauslöse-Sperre lesen
+2. **`0xD1A4` Live-View-Sperre lesen — muss 0 sein**
+3. `0xD09C` Objektivwarnung lesen
+4. Kameramodus umschalten
+5. Steht `0x5013` auf Serienbild, auf Einzelbild zurückstellen
+6. modellabhängig 500 ms warten
+7. `0xD1A2` prüfen — läuft Live View schon, `0x9201` überspringen
+8. `0x9201` (**parameterlos**), dann `0x90C8` pollen
+
+Bei `DeviceBusy` wiederholt sie `0x9201` bis zu zehnmal mit 500 ms Abstand.
+Danach holt ein Timer alle **66 ms** ein Bild — rund 15 Bilder je Sekunde.
+Nach fünf Fehlern in Folge bricht sie ab.
+
+`0xD1A4` ist eine **Bitmaske**, kein Fehlercode: Bit 24 ist „Objektiv
+eingefahren", daneben unter anderem Bit 23 ausgeschaltet, Bit 17 zu heiß, Bit 8
+Batterie leer, Bit 19 Kartenfehler. In `nikon.py` als `LiveViewProhibit`.
 
 ## Offene Fragen für die P1100
 

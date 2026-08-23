@@ -77,6 +77,112 @@ Ergebnis:   was tatsächlich herauskam
 Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
 ```
 
+### 23.08.2026 — Deep Dive in die Hersteller-App: Opcodes, Events, Zoom, Verschlüsselung
+Quelle:     Dieselbe dekompilierte App wie unten, acht Agenten auf getrennten
+            Bereichen. **Rang: dekompilierter Herstellercode**, an unserer
+            Hardware nicht verifiziert, sofern nicht anders vermerkt.
+
+Ergebnis:   **Alle sechs unbekannten Opcodes unserer Messung sind benannt:**
+
+            | Opcode | Name | Parameter |
+            |---|---|---|
+            | `0x9016` | **ZoomControl** | 2× uint32 `[wide, tele]`, nur einer belegt |
+            | `0x941C` | **GetEvent, neue Variante** | keine; Antwort anders als `0x90C7` |
+            | `0x941E` | PowerZoomByFocalLength | in der App nur als Fähigkeitsflag |
+            | `0x9520` | Auto-Übertragung start/stop | 1× `0x11` / `0x22` |
+            | `0x9521` | Liste markierter Objekte | 1× `0` |
+            | `0x9522` | Teilobjekt in wählbarer Größe | `[handle, größe, 0]`, Größe 4 = 8 MP |
+
+            **Drei Abweichungen unseres Codes, alle korrigiert:**
+            1. **`0x90C7` hat diese Kamera nicht, `0x941C` schon.** Die App
+               wählt genauso. Unser `get_events()` fragte nur nach `0x90C7` und
+               hätte für immer eine leere Liste geliefert — der schlimmste
+               Fehlertyp, weil er nicht auffällt. Die Antwortformate sind
+               verschieden: `0x90C7` zählt in 16 Bit mit einem Parameter je
+               Ereignis, `0x941C` in 32 Bit mit variabler Parameterzahl.
+            2. **Events werden gepollt, nicht empfangen.** Der Paketparser der
+               App behandelt Pakettyp 8 nirgends. Der Ereigniskanal trägt nur
+               den Init-Handshake und den Keepalive.
+            3. **Der Keepalive läuft aktiv über den Ereigniskanal**, alle
+               **9 Sekunden**, Antwort binnen 10. Wir haben bisher nur auf
+               fremde Pings geantwortet. Neu: `PtpIpConnection.ping()`.
+
+            **`SessionAlreadyOpen` (`0x201E`) ist kein Fehler** — die App
+            arbeitet mit der angefragten Kennung weiter. Auch korrigiert.
+
+            **Verbindungsaufbau der App**, der Reihe nach: TCP zum Kommandokanal
+            (Port 15740, `TCP_NODELAY`) → InitCommandRequest → **zweite TCP**
+            zum Ereigniskanal → InitEventRequest mit der Verbindungsnummer →
+            Keepalive starten → `GetDeviceInfo`. `OpenSession` gehört nicht dazu.
+            Version `0x00010000`, GUID big-endian, Lesepuffer 102.400 Byte.
+            Beim Trennen schickt sie **kein** `CloseSession`, sondern schließt
+            die Sockets hart.
+
+            **Zoom:** `0x5008` Focal Length wird von der App **nur gelesen** —
+            unsere frühere Notiz „schreibbar" war eine Fehldeutung des
+            Property-Flags. Gezoomt wird über `0x9016`, und das ist ausdrücklich
+            der Weg der Kompaktkameras; die spiegellosen nutzen `0x9464`, das
+            unsere Kamera nicht hat.
+
+            **Vendor-Properties, jetzt benannt** (aus unserer Messung):
+            `d05d` AF-Messfeld · `d0e1` Objektivtyp · `d0e3`/`d0e4` Brennweite
+            min/max · `d100` **Verschlusszeit** (Zähler/Nenner, `ffff/ffff` =
+            Bulb) · `d1a2` **Live-View-Status** · `d1a4` **Live-View-Sperrgrund**
+            (−1 = frei; das ist die Quelle von „Lens is retracting") ·
+            `d1f1` verbleibende Aufnahmen.
+            **`d303`, `d406`, `d407` kennt die App nicht** — die verrät nur die
+            Kamera selbst.
+
+            **Aufnahmepfad**, vollständig mit unseren Opcodes fahrbar:
+            `0x9207 (-1, 0)` auslösen — Parameter 1: `-1` normal, `-2` mit
+            Autofokus; Parameter 2: `0` Karte, `1` **SDRAM**, `2` beides —
+            dann `0x90C8` pollen, bis nicht mehr `DeviceBusy` (`0x2019`), dann
+            Ereignis `0x4002` für den Handle, `0x1008` für die Größe, `0x101B`
+            in **1-MiB-Blöcken** mit Fortsetzungs-Offset. **Die App benutzt
+            `0x1009 GetObject` nie.**
+
+            **Ereignisse**, die die App auswertet: `0x4002` ObjectAdded ·
+            `0x4005` StoreRemoved · `0x4006` DevicePropChanged · `0x400A`
+            StoreFull · `0x400D` CaptureComplete · `0xC105`/`0xC108`/`0xC10A`
+            Video · `0xC700` LSS-Sammelcode · `0xC702`.
+
+            **Vendor-Fehlercodes** sind vollständig bekannt, u.a. `0xA002`
+            OutOfFocus · `0xA004` InvalidStatus · `0xA00B` **NotLiveView** ·
+            `0xA200` BulbReleaseBusy · `0xA021` StoreError.
+
+            **Auslösen über Bluetooth geht an dieser Kamera nicht.** Der
+            Fernsteuerpfad der App liegt auf `0x2021`, das unsere Kamera nicht
+            hat — und `0x2009` bestätigt es: die Feature-Bits `fd010000`
+            dekodieren zu Bit 11 (CameraControl) = **0**. Was BLE kann:
+            Aufwecken (Bits 1–2 = WAKE_SUPPORT), WLAN-Konfiguration,
+            Bildtransfer-Anstoß, Zeit, Standort, Batterie.
+            `0x2008` ist kein Auslöser, sondern ein Anforderungsfeld: drei
+            Vier-Bit-Felder, unser Ruhewert `1100` heißt „schick mir Zeit und
+            Standort". `00 01` setzt ConnectionRequest — zweiter Kandidat für
+            den WLAN-Start, im Code aber nicht als solcher belegt.
+
+            **Die Verschlüsselung der WLAN-Zugangsdaten ist Blowfish** —
+            gesichert: die native Bibliothek trägt Quellpfade auf
+            `blowfishLib/LsBlowfish.c`, im Nur-Lese-Segment stehen das
+            unveränderte P-Array (`243f6a88 85a308d3 …`) und die S-Box, und
+            eine Assertion prüft die 56-Byte-Schlüsselgrenze. Kein AES, kein
+            OpenSSL, kein eingebetteter Schlüssel.
+
+            **Aber der Schlüssel steht nicht auf der Leitung.** Die Kette ist
+            `init(Zufallszahl)` → `Stage1st` → `Stage3rd` → **`generateKey(
+            Stufe-4-Payload, Geräte-ID)`**, und `init` baut internen Zustand
+            auf, der nie gesendet wird. Der gespeicherte Kontext hat exakt die
+            Gestalt eines Blowfish-Schlüsselplans: `long[18]` P-Array,
+            `long[1024]` vier S-Boxen, dazu drei 8-Byte-Blöcke.
+
+            **Praktisch entscheidend:** Der Kontext ist **pro Kopplung stabil**
+            — nur der Chiffretext wechselt. Wer ihn einmal hat, kann alle
+            künftigen Passwörter dieser Kopplung lesen.
+Folge:      `nikon.py`: `ZOOM_CONTROL`, `GET_EVENT_EX` und vier weitere Opcodes,
+            `NikonProperty` neu, `get_events()` wählt das richtige Verfahren.
+            `ptpip.py`: `ping()` neu, `open_session()` toleriert `0x201E`.
+            Sechs neue Tests nageln das fest.
+
 ### 23.08.2026, 02:00 — Der WLAN-Auslöser, aus der Hersteller-App gelesen
 Quelle:     SnapBridge 2.13.3, per `adb pull` vom eigenen Handy geholt (68 MB,
             signiert, kein Drittanbieter-Download), mit baksmali in 11.721
