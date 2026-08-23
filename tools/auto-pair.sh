@@ -64,10 +64,12 @@ while true; do
     log "Kamera frisch (rssi $RSSI), kein Bond -> Handshake"
     # inquiry listener starts NOW and runs the whole session -- the camera
     # opens its classic side only for a few seconds right after the LE
-    # handshake; a late inquiry misses the window (measured 24.08. 00:53)
+    # handshake; a late inquiry misses the window (measured 24.08. 00:53).
+    # CLASSIC results only: hcitool inq reports BR/EDR devices with their
+    # class-of-device; bluetoothctl scan mixes in LE RPAs (the 00:55 miss).
     rm -f /tmp/inquiry_hits.txt
-    ( bluetoothctl scan on 2>/dev/null | while read -r L; do
-        echo "$L" | grep -qiE "P1100|7C:B8:DA" && echo "$L" >> /tmp/inquiry_hits.txt
+    ( hcitool inq --flush 2>/dev/null | while read -r L; do
+        echo "$L" | grep -qi "080620" && echo "$L" >> /tmp/inquiry_hits.txt
       done ) &
     INQPID=$!
     timeout 90 .venv/bin/python tools/remote-start.py --register skyshutter \
