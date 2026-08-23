@@ -27,7 +27,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert (BlueZ-Bond via bluetoothctl, nmcli-Join auf wlan0) und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang: WAN→Heimnetz (192.168.1.143), LAN→Raspberry (192.168.3.178 per DHCP), Port-Forward 2222→Raspberry:22; alter camjoin/procd-Watcher entfernt, repeater-uci P1100-Eintrag gelöscht, defekter GL-VPN-Firewall-Include deaktiviert (fw4-Reset lädt jetzt sauber). |
-| **Offenes Gate** | **Erster Hardware-Lauf der neuen Architektur.** (a) Classic-Bond einmalig am Raspberry anlegen (`bluetoothctl pair 7C:B8:DA:A6:4F:FE`, Kamera in Kopplungsbereitschaft); (b) `remote-start --join` auf dem Raspberry: BLE→AP→nmcli-Join auf wlan0; (c) `liveview.py --host 192.168.0.10` auf dem Raspberry. **Ungeklärt aus der Mango-Runde:** der Kamera-AP-Join schlug am Mango wiederholt mit „connect fail" nach ~27 s durch (BSS gefunden, ch 6, exzellentes Signal, Key 2× verifiziert entschlüsselt) — Verdacht TKIP/AES-Mix oder AP-Client-Filter. Der nmcli/wpa_supplicant-Stack des Raspberry ist der saubere Testplatz: schlägt er auch dort fehl, liegt es an Kamera/Key, nicht am Client. |
+| **Offenes Gate** | **Classic-Bond am Raspberry.** BLE-Handshake läuft am Raspberry sauber (auth in 9 s), aber die Kamera lehnt das Pairing ab (Falle 5a: zu viele Versuche, Funkruhe nötig). Classic-Adresse rotiert pro Aufwach-Zyklus → dynamisch greifen (fullpair2.sh tut das). Agent braucht DisplayYesNo (steht). Danach: `remote-start --join --hold` → nmcli-Join auf wlan0 → `liveview --host 192.168.0.10` — alles vorbereitet. |
 | **Nächster Schritt** | Kommandoblock „erster Hardware-Lauf" (unten, Messung 23.08. Feld-Rig) ausführen, sobald die Kamera griffbereit ist. Danach: AZ-GTi anbinden (FTDI bevorzugt; WLAN-Fallback über Mango-Repeater braucht SSID+PSK vom Mount — Thomas muss die vom AZ-GTi-Display ablesen, stehen nirgends dokumentiert). |
 | **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
@@ -99,6 +99,43 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 (Nacht) — Raspberry: BLE-Handshake top, Classic-Bond von der Kamera blockiert (Falle 5a)
+Aufbau:     Raspberry als Funk-Zentrale (siehe Abend-Messung). Ablauf nach
+            pairing.md: BLE-Handshake → Inquiry → Pair mit BlueZ-Agent.
+Belegt:     - **Der BLE-Pfad funktioniert am Raspberry exzellent:** mehrfach
+              authentiziert + registriert in ~9 s pro Session (remote-start
+              Stage 2-3), Establishment-Write akzeptiert. Die Portierung
+              (BlueZ + nmcli) arbeitet.
+            - **Die Kamera ist nach dem BLE-Handshake sofort im Classic-Inquiry
+              sichtbar** — aber unter einer **pro Aufwach-Zyklus rotierenden
+              Classic-Adresse** (beobachtet: 5D:8F:…, 58:4D:…, 7F:CA:…,
+              4E:68:…; nie die alte Bond-Adresse 7C:B8:DA:4F:FE). Ein Bond auf
+              eine fest einprogrammierte MAC ist damit wertlos — der Ablauf
+              muss die aktuelle Inquiry-Adresse dynamisch greifen (tut
+              fullpair2.sh).
+            - **Pairing lehnt die Kamera auf LMP-Ebene ab:** AuthenticationFailed
+              ohne dass der BlueZ-Agent je kontaktiert wurde (kein
+              RequestConfirmation) — d.h. bevor irgendein Dialog entsteht.
+              Ausnahme: der ERSTE Versuch nach Kamera-Neustart (23:30:50)
+              blieb ~25 s offen (Dialog-Fenster!) und fiel dann — vermutlich
+              fehlte die OK-Bestätigung am Kamera-Display. Alle Folgeversuche
+              (auch nach Windows-seitigem forget): sofortige Ablehnung →
+              **Falle 5a** (pairing.md: nach ~10 Versuchen verweigert die
+              Kamera stundenlang; Abhilfe: Aus/Ein + Funkruhe).
+            - Agent-Lektion: NoInputNoOutput lässt SSP auf Just Works
+              fallen — für Nikons Numeric-Comparison braucht der Agent
+              **DisplayYesNo** (pair_agent.py auf dem Raspberry,
+              auto-confirmend). Korrekt registriert, kam aber nie zum Zug.
+            - Windows-Bonds vollständig entfernt (classic-pair.py forget:
+              UNPAIRED bestätigt) — Falle 4b ausgeräumt.
+Offen:      EIN sauberer Versuch mit Thomas AM DISPLAY (Neustart der Kamera
+            vorher, Code sofort bestätigen). Wenn der durch ist: Bond +
+            trust, danach voller remote-start --join --hold und liveview auf
+            dem Raspberry (alles vorbereitet: /tmp/fullpair2.sh, /tmp/
+            pair_agent.py, remote-start.py portiert b84c904). Scheitert auch
+            der: 6 h Funkruhe laut pairing.md-Beobachtung, nächster Anlauf
+            morgen.
 
 ### 23.08.2026 (Abend) — Architektur-Wechsel: Raspberry wird Funk-Zentrale; Mango-Join scheitert an der Kamera, nicht am Timing
 Art:        Infrastruktur-Umbau + Systemmessungen; Kamera nur indirekt (AP-Fenster
