@@ -15,15 +15,17 @@ Die Arbeitsweise steht in [playbook.md](playbook.md), der belegte Stand in
 | **2** Fähigkeiten auslesen | Vendor-Opcodes in der Liste | **erreicht** — 38 Operationen, 20 Properties |
 | **3** Live View und Auslöser | ein Bild im Browser | **offen** — Opcodes vorhanden, Bild fehlt |
 | **4** Zoom, Belichtung, Fokus | Zoomfahrt per Kommando | **teilweise** — `0x9016` bekannt, ungetestet |
-| **5** BLE-Pfad | WLAN startet ohne die App | **teilweise** — Kopplung läuft, Zugangsdaten geknackt, aber `0x01` auf `0x2005` startet den AP nicht allein |
+| **5** BLE-Pfad | WLAN startet ohne die App | **erreicht** — `remote-start.py` fährt den AP hoch (CCCDs + `VALID_WAKE` + `0x2005`), an der Hardware belegt |
+| **3** Live View und Auslöser | ein Bild im Browser | **offen, letzte Meile** — AP steht; fehlt nur der zuverlässige AP-Beitritt (GL.iNet-Mango, WISP) + PTP/IP |
 | **6** Robustheit | vier Stunden Intervall ohne Handgriff | offen |
 
-**Die Reihenfolge hat sich gedreht.** Der Plan ging davon aus, dass Phase 1 über
-WLAN läuft und Phase 5 nur bei Bedarf nötig wird. Tatsächlich lieferte **USB**
-die Bestätigung für Phase 1 und 2, während der WLAN-Zugang bis heute an einem
-einzigen Byte hängt. Phase 5 ist damit nicht die Rückfallebene, sondern der
-kritische Pfad — HDMI schaltet den Funk ab, USB zieht das Objektiv ein, und nur
-über WLAN gibt es Bild und Steuerung zugleich.
+**Die Reihenfolge hat sich gedreht.** USB lieferte die Bestätigung für Phase 1/2;
+der WLAN-Zugang (Phase 5) ist der kritische Pfad und jetzt **geknackt** — die
+korrigierte BLE-Sequenz bringt die Kamera dazu, ihr WLAN zu öffnen (frühere
+„hängt an einem Byte"-Annahme war falsch: es fehlten die CCCD-Abos, und
+`0x2001=0x03` ist VALID_WAKE, kein Gate). Offen bleibt nur die letzte Meile:
+zuverlässig dem AP beitreten und das erste Bild ziehen — reine Timing-Frage
+(BLE-Stack-Drops, AP-Fenster). Belegte Sequenz: [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md).
 
 ## 1. Rollenverteilung
 

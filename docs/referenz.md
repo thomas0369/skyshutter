@@ -117,15 +117,18 @@ Der Encoder schreibt alle drei Bits, der Decoder liest nur Bit 0 und 1 zurück.
 **Der gemessene Wert `03` ist deshalb kein Ruhewert, sondern eine Statusmeldung:
 „WLAN und Bluetooth aktiv".** Diese Verwechslung hat uns einen Tag gekostet.
 
-Ablauf der App (aus `CameraConnectByWiFiUseCase`/`M0` rekonstruiert, 23.08.), in
-**einer** authentifizierten Sitzung: `0x2000` Handshake → `0x2008`
-ConnectionRequest auf OFF (nur falls ON) → `0x2001` Power-Gate lesen → `0x2004`
-Config lesen → **`0x01` auf `0x2005`** → sofort nach der SSID scannen und
-einbuchen. **Nach `0x2005` folgt kein weiteres BLE-Kommando**, und die App wartet
-auf keine „AP steht"-Meldung — sie scannt einfach das WLAN. Bleibt der AP aus,
-fehlt also eine **Vorbedingung vor** `0x2005`, kein Folge-Byte. Das deckt sich mit
-drei unabhängigen Code-Durchläufen; der `0x2005`-Write der App ist byte-für-byte
-unser `0x01`.
+**`0x01` auf `0x2005` fährt den AP tatsächlich hoch — an der Hardware bestätigt**
+(23.08., `remote-start.py`; Kamera zeigt WLAN-Symbol, der GL.iNet-Mango sieht den
+AP auf Kanal 6, WPA2). Voraussetzung ist die vollständige, richtig aufgebaute
+Sitzung — die volle belegte Sequenz steht in
+[REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md). Kurz: LE verbinden (unverschlüsselt) →
+**CCCDs setzen** (Indicate `0x2000`, Notify `0x2008`) → 4-Stufen-Handshake (Kamera
+antwortet per Indication) → `0x2001` lesen (`0x03`=VALID_WAKE, bereit) → `0x2004`
+lesen → **`0x01` auf `0x2005`**. Nach `0x2005` folgt kein weiteres BLE-Kommando;
+die Kamera öffnet ihr WLAN, und der Client tritt mit den aus `0x2004`
+entschlüsselten Zugangsdaten bei (das **Passwort rotiert pro Session**). Frühere
+Fehlschläge lagen daran, dass wir die **CCCDs nie gesetzt** hatten — nicht an
+einem fehlenden Byte.
 
 ### `0x2004` — Zugangsdaten, 102 Byte **[H]**
 
@@ -155,13 +158,11 @@ Zwei Byte, uint16 little-endian, drei Vier-Bit-Felder:
 | 8–11 | Verbindung anfordern | 0 aus, 1 an |
 
 Gemessen `1100` → `0x0011` → Zeit **an**, Standort **an**, Verbindung **aus**
-(Wire-Werte OFF=0, ON=1 — die Enum-Ordinals der App sind 1/2 und ein anderes
-Ding). **Die App schreibt hier nur OFF:** vor dem `0x2005`-Write liest sie
-`0x2008` und setzt — **nur wenn Verbindung gerade ON ist** — dieses eine Nibble
-auf 0 zurück; Zeit und Standort bleiben stehen (`M0.a()`, read-modify-write). Das
-ist der einzige weitere BLE-Write auf dem WLAN-Pfad und damit der Hauptkandidat
-für die fehlende Vorbedingung — **sofern** unsere Sitzung die Kamera überhaupt in
-den ON-Zustand bringt (der ungekoppelte Lesewert `0011` stand schon auf OFF).
+(Wire-Werte OFF=0, ON=1). **Sackgasse:** Der `0x2008`-ConnectionRequest→OFF war
+zeitweise der Verdächtige für die „fehlende Vorbedingung", ist es aber **nicht** —
+in unseren Sitzungen stand die Verbindung ohnehin auf OFF (No-Op). Die echte
+Lücke waren die **CCCD-Abos** auf `0x2000`/`0x2008` (siehe `0x2005` oben). Auf dem
+WLAN-Pfad **abonniert** die App `0x2008` (Notify), schreibt es hier aber nicht.
 
 ### Verschlüsselung der Zugangsdaten **[M]** — geknackt
 

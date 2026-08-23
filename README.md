@@ -30,16 +30,19 @@ JPEGs. Die Werkzeuge in `tools/` haben eigene Voraussetzungen — siehe
 | **Live View** | **vorhanden** — `9201`, `9202`, `9203` stehen in `operations_supported` |
 | **Zoom** | Operation bekannt (`9016`), an der Hardware noch nicht ausgelöst |
 | **Kopplung** | **läuft reproduzierbar** — 40 Sekunden vom Funk-Reset bis zum Bond |
-| **Zugangsdaten** | **geknackt** — SSID und Passwort per `skyshutter wifi` aus der Kopplung entschlüsselbar |
-| **WLAN-AP** | **offenes Gate** — `0x01` auf `0x2005` startet den Access Point nicht allein |
+| **Zugangsdaten** | **geknackt** — SSID und Passwort per `skyshutter wifi`; das Passwort **rotiert pro Session** und wird frisch entschlüsselt |
+| **WLAN-AP** | **bestätigt** — `remote-start.py` fährt den Access Point hoch (korrigierte BLE-Sequenz: CCCDs + `VALID_WAKE` + `0x2005`), von der Hardware belegt |
+| **Live View** | **letzte Meile** — Beitritt zum Kamera-AP über den GL.iNet-Mango (WISP) + PTP/IP; hängt nur noch an BLE-/AP-Timing, kein offenes Wissen |
 
 Alles Gemessene steht in [docs/referenz.md](docs/referenz.md), der Weg dorthin
-im [Messprotokoll](docs/FINDINGS.md).
+im [Messprotokoll](docs/FINDINGS.md); die belegte End-to-End-Startsequenz in
+[docs/REMOTE_SEQUENCE.md](docs/REMOTE_SEQUENCE.md).
 
-**Was heute schon geht:** über USB die Kamera abfragen, ihre Fähigkeiten
-auslesen, Bilder holen; die WLAN-Zugangsdaten aus einer Kopplung entschlüsseln.
-**Was noch nicht geht:** das Livebild — dafür muss die
-Kamera ihr WLAN öffnen, und dieser Auslöser ist zwar bekannt, aber ungetestet.
+**Was heute schon geht:** über USB die Kamera abfragen, Fähigkeiten auslesen,
+Bilder holen; die (rotierenden) WLAN-Zugangsdaten aus einer Kopplung
+entschlüsseln; **die Kamera per BLE dazu bringen, ihr WLAN zu öffnen**.
+**Was noch fehlt:** der zuverlässige AP-Beitritt + das erste Livebild über
+WLAN — reine Timing-Sache (siehe FINDINGS, „Mango-Join fast fertig").
 
 ---
 
