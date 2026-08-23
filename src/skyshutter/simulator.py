@@ -21,7 +21,7 @@ import socketserver
 import struct
 import uuid
 
-from .nikon import NikonOperation
+from .nikon import NikonOperation, NikonProperty
 from .ptp import DeviceInfo, OperationCode, ResponseCode, VendorExtension
 from .ptpip import (
     DEFAULT_PORT,
@@ -47,20 +47,40 @@ SIMULATED_OPERATIONS = [
     OperationCode.GET_DEVICE_PROP_DESC,
     OperationCode.GET_DEVICE_PROP_VALUE,
     OperationCode.SET_DEVICE_PROP_VALUE,
+    OperationCode.GET_PARTIAL_OBJECT,
     NikonOperation.CAPTURE,
     NikonOperation.AF_DRIVE,
-    NikonOperation.GET_EVENT,
+    # Measured 23.08.2026: the real camera offers only the newer event poll,
+    # not 0x90C7. The simulator says the same, so a client that asks for the
+    # old one here fails here instead of on the bench.
+    NikonOperation.GET_EVENT_EX,
     NikonOperation.DEVICE_READY,
     NikonOperation.START_LIVE_VIEW,
     NikonOperation.END_LIVE_VIEW,
     NikonOperation.GET_LIVE_VIEW_IMG,
     NikonOperation.INITIATE_CAPTURE_REC_IN_MEDIA,
+    NikonOperation.ZOOM_CONTROL,
 ]
 
 SIMULATOR_GUID = uuid.UUID("5c9a7e00-0000-4000-8000-000000000001")
 
-# 384 byte header, as some Nikon models prepend to live view frames.
-LIVE_VIEW_HEADER = bytes(384)
+#: What the simulated sensor and its visible cut-out measure.
+SIM_JPEG_SIZE = (640, 480)
+SIM_WHOLE_SIZE = (1000, 750)
+
+
+def _live_view_header(jpeg_length: int) -> bytes:
+    """The 384-byte frame header, big-endian, as the vendor app reads it."""
+    head = bytearray(0x180)
+    head[0x04:0x08] = jpeg_length.to_bytes(4, "big")
+    head[0x08:0x0A] = SIM_JPEG_SIZE[0].to_bytes(2, "big")
+    head[0x0A:0x0C] = SIM_JPEG_SIZE[1].to_bytes(2, "big")
+    head[0x0C:0x0E] = SIM_WHOLE_SIZE[0].to_bytes(2, "big")
+    head[0x0E:0x10] = SIM_WHOLE_SIZE[1].to_bytes(2, "big")
+    # Visible area: the full sensor, so the derived zoom comes out as 1.0.
+    head[0x10:0x12] = SIM_WHOLE_SIZE[0].to_bytes(2, "big")
+    head[0x12:0x14] = SIM_WHOLE_SIZE[1].to_bytes(2, "big")
+    return bytes(head)
 
 
 def _placeholder_jpeg() -> bytes:
@@ -87,7 +107,18 @@ def simulated_device_info() -> DeviceInfo:
         functional_mode=0,
         operations_supported=[int(op) for op in SIMULATED_OPERATIONS],
         events_supported=[0x4002, 0x400D, 0xC101, 0xC102],
-        device_properties_supported=[0x5001, 0x5005, 0x500F, 0x5010],
+        device_properties_supported=[
+            0x5001,
+            0x5005,
+            0x500F,
+            0x5010,
+            int(NikonProperty.SHUTTER_SPEED),
+            int(NikonProperty.LIVE_VIEW_STATUS),
+            int(NikonProperty.LIVE_VIEW_PROHIBIT),
+            int(NikonProperty.REMAINING_CAPTURE),
+            int(NikonProperty.LENS_FOCAL_MIN),
+            int(NikonProperty.LENS_FOCAL_MAX),
+        ],
         capture_formats=[0x3801],
         image_formats=[0x3801, 0x3000],
         manufacturer="Nikon Corporation",
@@ -131,7 +162,13 @@ class _Handler(socketserver.BaseRequestHandler):
 
     def handle_operation(self, sock: socket.socket, packet: Packet) -> None:
         _, opcode, transaction_id = struct.unpack("<IHI", packet.payload[:10])
-        code, data = self.server.operation(opcode)
+        # Parameters follow the ten header bytes, four bytes each. Property
+        # reads need them -- without, every property looks like the same one.
+        raw = packet.payload[10:]
+        params = tuple(
+            struct.unpack_from("<I", raw, offset)[0] for offset in range(0, len(raw) - 3, 4)
+        )
+        code, data = self.server.operation(opcode, params)
         log.info("operation 0x%04X -> 0x%04X (%d bytes)", opcode, code, len(data))
         if data:
             send_packet(
@@ -160,16 +197,37 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         self.frame = _placeholder_jpeg()
         self.live_view_active = False
         self.captures = 0
+        #: Vendor properties the real camera reports. The prohibit condition
+        #: starts clear -- a simulator with the lens retracted would be useless.
+        self.properties: dict[int, int] = {
+            NikonProperty.LIVE_VIEW_STATUS: 0,
+            NikonProperty.LIVE_VIEW_PROHIBIT: 0,
+            NikonProperty.SHUTTER_SPEED: 0,
+            NikonProperty.REMAINING_CAPTURE: 999,
+            NikonProperty.LENS_FOCAL_MIN: 24,
+            NikonProperty.LENS_FOCAL_MAX: 3000,
+        }
 
-    def operation(self, opcode: int) -> tuple[int, bytes]:
+    def operation(self, opcode: int, params: tuple[int, ...] = ()) -> tuple[int, bytes]:
         if opcode == OperationCode.GET_DEVICE_INFO:
             return ResponseCode.OK, self.device_info.pack()
+        if opcode == OperationCode.GET_DEVICE_PROP_VALUE:
+            code = params[0] if params else 0
+            if code in self.properties:
+                return ResponseCode.OK, struct.pack("<I", self.properties[code])
+            return ResponseCode.OPERATION_NOT_SUPPORTED, b""
+        if opcode == OperationCode.GET_PARTIAL_OBJECT:
+            # (handle, offset, length) -- hand back that slice of the frame.
+            _, offset, length = (*params, 0, 0, 0)[:3]
+            return ResponseCode.OK, self.frame[offset : offset + length]
         if opcode in (OperationCode.OPEN_SESSION, OperationCode.CLOSE_SESSION):
             return ResponseCode.OK, b""
         if opcode == NikonOperation.DEVICE_READY:
             return ResponseCode.OK, b""
-        if opcode == NikonOperation.GET_EVENT:
-            return ResponseCode.OK, struct.pack("<H", 0)
+        if opcode == NikonOperation.GET_EVENT_EX:
+            # uint32 count, then per event a code, a parameter count, and the
+            # parameters themselves.
+            return ResponseCode.OK, struct.pack("<I", 0)
         if opcode == NikonOperation.START_LIVE_VIEW:
             self.live_view_active = True
             return ResponseCode.OK, b""
@@ -179,7 +237,9 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         if opcode == NikonOperation.GET_LIVE_VIEW_IMG:
             if not self.live_view_active:
                 return ResponseCode.DEVICE_BUSY, b""
-            return ResponseCode.OK, LIVE_VIEW_HEADER + self.frame
+            return ResponseCode.OK, _live_view_header(len(self.frame)) + self.frame
+        if opcode == NikonOperation.ZOOM_CONTROL:
+            return ResponseCode.OK, b""
         if opcode in (
             OperationCode.INITIATE_CAPTURE,
             NikonOperation.CAPTURE,

@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 
-from .ptp import DeviceInfo, OperationCode, PtpError, ResponseCode
+from .ptp import DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import PtpIpConnection
 
 log = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ class NikonCamera:
     def _require(self, opcode: int, what: str) -> None:
         if self.device_info is not None and not self.device_info.supports(opcode):
             raise PtpError(ResponseCode.OPERATION_NOT_SUPPORTED, opcode)
-        log.debug("using %s for %s", NikonOperation(opcode).name, what)
+        log.debug("using %s for %s", code_name(opcode, NikonOperation), what)
 
     # -- status ------------------------------------------------------------
 
@@ -337,6 +337,28 @@ class NikonCamera:
             events.append((code, first))
         return events
 
+    # -- properties --------------------------------------------------------
+
+    def get_property(self, code: int) -> bytes:
+        """Raw value of a device property."""
+        return self.connection.transaction(OperationCode.GET_DEVICE_PROP_VALUE, (code,)).data
+
+    def get_property_u32(self, code: int) -> int:
+        raw = self.get_property(code)
+        return int.from_bytes(raw[:4], "little") if len(raw) >= 4 else 0
+
+    def live_view_prohibit(self) -> LiveViewProhibit:
+        """Why live view would refuse right now; falsy when nothing is in the way.
+
+        Worth asking *before* starting, not after failing: over USB this is
+        what reports the retracted lens, and the answer names the reason
+        instead of leaving a bare error code.
+        """
+        return LiveViewProhibit(self.get_property_u32(NikonProperty.LIVE_VIEW_PROHIBIT))
+
+    def live_view_running(self) -> bool:
+        return bool(self.get_property_u32(NikonProperty.LIVE_VIEW_STATUS))
+
     # -- shooting ----------------------------------------------------------
 
     def autofocus(self) -> None:
@@ -344,31 +366,110 @@ class NikonCamera:
         self.connection.transaction(NikonOperation.AF_DRIVE)
         self.wait_until_ready()
 
-    def capture(self) -> None:
-        """Release the shutter, preferring the most capable opcode available."""
+    def zoom(self, steps: int) -> None:
+        """Drive the optical zoom: positive towards tele, negative towards wide.
+
+        Two parameters, and exactly one of them carries the amount -- that is
+        how the compact bodies do it. The mirrorless ones use a different
+        opcode this camera does not have.
+        """
+        self._require(NikonOperation.ZOOM_CONTROL, "zoom")
+        wide, tele = (0, steps) if steps >= 0 else (abs(steps), 0)
+        self.connection.transaction(NikonOperation.ZOOM_CONTROL, (wide, tele))
+        self.wait_until_ready()
+
+    def capture(self, autofocus: bool = False, target: int = 0) -> None:
+        """Release the shutter.
+
+        ``target`` picks where the picture lands: 0 card, 1 the camera's own
+        memory, 2 both. The vendor app always says 0; 1 skips the card
+        entirely, which is untested here but is what the camera offers.
+        """
         if self.supports(NikonOperation.INITIATE_CAPTURE_REC_IN_MEDIA):
-            # (0xFFFFFFFF, 0) = "current AF area", "record to card"
+            # First parameter is a signed -1 for a plain release, -2 to focus
+            # first; it travels as an unsigned word.
+            release = 0xFFFFFFFE if autofocus else 0xFFFFFFFF
             self.connection.transaction(
-                NikonOperation.INITIATE_CAPTURE_REC_IN_MEDIA, (0xFFFFFFFF, 0x00000000)
+                NikonOperation.INITIATE_CAPTURE_REC_IN_MEDIA, (release, target)
             )
         elif self.supports(NikonOperation.CAPTURE):
             self.connection.transaction(NikonOperation.CAPTURE)
         else:
             self.connection.transaction(OperationCode.INITIATE_CAPTURE, (0, 0))
-        self.wait_until_ready()
+        # The camera reports "busy" until the picture is written; that, not an
+        # event, is what the vendor app waits for.
+        self.wait_until_ready(timeout=30.0)
+
+    # -- images ------------------------------------------------------------
+
+    def download(self, handle: int, size: int, chunk: int = 1 << 20) -> bytes:
+        """Fetch an image in pieces.
+
+        The vendor app never uses plain ``GetObject`` -- everything comes
+        through ``GetPartialObject`` in one-megabyte blocks, with no size
+        threshold. That also means a transfer can be resumed rather than
+        restarted, which matters over a camera's own access point.
+        """
+        self._require(OperationCode.GET_PARTIAL_OBJECT, "download")
+        received = bytearray()
+        while len(received) < size:
+            want = min(chunk, size - len(received))
+            result = self.connection.transaction(
+                OperationCode.GET_PARTIAL_OBJECT, (handle, len(received), want)
+            )
+            if not result.data:
+                break
+            received += result.data
+        return bytes(received)
 
     # -- live view ---------------------------------------------------------
 
-    def start_live_view(self) -> None:
+    def start_live_view(self, attempts: int = 10, pause: float = 0.5) -> None:
+        """Start live view, checking first why it might refuse.
+
+        The vendor app reads the prohibit condition before it tries, and
+        retries up to ten times half a second apart while the camera says
+        busy. Both are worth copying: the check turns a bare error into a
+        named reason, and the camera does report busy on the first attempt.
+        """
         self._require(NikonOperation.START_LIVE_VIEW, "live view")
-        self.connection.transaction(NikonOperation.START_LIVE_VIEW)
-        self.wait_until_ready()
+
+        reason = self.live_view_prohibit()
+        if reason:
+            raise PtpError(ResponseCode.DEVICE_BUSY, NikonOperation.START_LIVE_VIEW)
+
+        if self.live_view_running():
+            log.debug("live view is already running, not starting it again")
+            return
+
+        for attempt in range(1, attempts + 1):
+            result = self.connection.transaction(
+                NikonOperation.START_LIVE_VIEW, raise_on_error=False
+            )
+            if result.ok:
+                self.wait_until_ready()
+                return
+            if result.response_code != ResponseCode.DEVICE_BUSY:
+                raise PtpError(result.response_code, NikonOperation.START_LIVE_VIEW)
+            log.debug("live view busy, attempt %d/%d", attempt, attempts)
+            time.sleep(pause)
+        raise PtpError(ResponseCode.DEVICE_BUSY, NikonOperation.START_LIVE_VIEW)
 
     def end_live_view(self) -> None:
         self.connection.transaction(NikonOperation.END_LIVE_VIEW, raise_on_error=False)
 
     def get_live_view_frame(self) -> bytes | None:
         """One live view JPEG, or ``None`` while the camera has nothing yet."""
+        frame = self.get_live_view()
+        return frame.jpeg if frame else None
+
+    def get_live_view(self) -> LiveViewFrame | None:
+        """One live view frame with everything the camera reports about it.
+
+        Beyond the picture that is the visible cut-out of the sensor, the
+        autofocus frame and the orientation sensor -- worth having when the
+        camera sits on a tripod pointing at the sky.
+        """
         result = self.connection.transaction(
             NikonOperation.GET_LIVE_VIEW_IMG, raise_on_error=False
         )
@@ -376,7 +477,14 @@ class NikonCamera:
             if result.response_code == ResponseCode.DEVICE_BUSY:
                 return None
             raise PtpError(result.response_code, NikonOperation.GET_LIVE_VIEW_IMG)
-        return extract_jpeg(result.data)
+        frame = parse_live_view(result.data)
+        if frame is not None:
+            return frame
+        # Shorter header than this camera uses; keep the picture anyway.
+        jpeg = extract_jpeg(result.data)
+        if jpeg is None:
+            return None
+        return LiveViewFrame(jpeg, 0, 0, 0, 0, (0, 0, 0, 0), (0, 0, 0, 0), 0, 0, 0, 0)
 
     @contextmanager
     def live_view(self) -> Iterator[NikonCamera]:
