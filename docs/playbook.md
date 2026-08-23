@@ -16,8 +16,11 @@ Immer, bevor irgendetwas anderes passiert:
 ```bash
 git log --oneline -5 && git status --short
 python -m pytest -q && ruff check .
-sed -n '1,40p' docs/FINDINGS.md      # wo stehen wir wirklich?
+sed -n '1,45p' docs/FINDINGS.md      # Stand-Block: wo stehen wir wirklich?
 ```
+
+Wer neu dazukommt, liest stattdessen [einfuehrung.md](einfuehrung.md) — worum
+es überhaupt geht — und danach [referenz.md](referenz.md), was die Kamera kann.
 
 Dazu MEMEX-Recall zu „skyshutter P1100" (Memories #17934 Recherche, #17935
 Projektstand). Dann in einem Satz sagen: **welche Phase, welches offene Gate,
@@ -112,25 +115,41 @@ An der Kamera hängt echtes Gerät mit echten Bildern drauf. Deshalb, ausnahmslo
   eines Bereichs wie `0x9000`–`0x92FF`. In Nikons Vendor-Bereich liegen
   Lösch-, Format- und Firmware-Operationen; ein Sweep kann Bilder vernichten oder
   die Kamera in einen Zustand bringen, aus dem nur der Service hilft.
-* **Lesende Operationen** (`Get*`, `DeviceReady`, `GetEvent`) laufen ohne
+* **Lesende Operationen** (`Get*`, `DeviceReady`, Ereignisabfrage) laufen ohne
   Rückfrage.
-* **Schreibende Operationen** (`SetDevicePropValue`, `MfDrive`, alles mit
-  `Delete`, `Format`, `Firmware` im Namen) nur nach ausdrücklichem OK von Thomas,
-  mit Ansage, was passieren soll.
+* **Schreibende Operationen** (`SetDevicePropValue`, alles mit `Delete`,
+  `Format`, `Firmware` im Namen) nur nach ausdrücklichem OK von Thomas, mit
+  Ansage, was passieren soll.
+  **`0x100F FormatStore` steht in der gemessenen Operationsliste dieser
+  Kamera** — es anzufassen wäre unumkehrbar.
 * **Vor jeder Schreib-Runde**: Speicherkarte leer oder gesichert, Akku voll.
 * Kein Dauerlauf ohne Abbruchbedingung. Live View heizt die Kamera.
 
 ## 8. Was ich zwischen den Runden ohne Hardware baue
 
-Damit eine Session nie leerläuft, während Thomas nicht am Gerät ist — Reihenfolge
-ist die Priorität:
+Damit eine Session nie leerläuft, während Thomas nicht am Gerät ist.
 
-1. **`skyshutter pcap datei.pcap`** — PTP/IP aus einem Mitschnitt zerlegen, reines
-   Python. Macht Phase 1b zu einer Ein-Zeilen-Sache.
-2. **`skyshutter bundle`** — sammelt Probe, DeviceInfo roh und geparst, ein
+**Erledigt** (Stand 23.08.2026):
+
+- **BLE-Werkzeuge** — `ble-probe.py`, `classic-pair.py`, `ble-proxy.py`,
+  `ble-camera-sim.py`. Übersicht in [../tools/README.md](../tools/README.md).
+- **Zweiter Transport** — `ptpusb.py`, PTP über Kabel, gleiche Schnittstelle
+  wie PTP/IP.
+- **Analyse der Hersteller-App** — Opcodes, Frame-Format, WLAN-Auslöser,
+  Verschlüsselung. Ergebnisse in [referenz.md](referenz.md).
+- **Kopplungsablauf** — `pair.sh`, portabel, mit Ansagen.
+
+**Offen**, nach Nutzen sortiert:
+
+1. **`skyshutter bundle`** — sammelt Probe, DeviceInfo roh und geparst, ein
    Live-View-Frame und Logs in ein Verzeichnis. Ein Kommando statt sechs.
-3. **`skyshutter props --dump/--diff`** — das Werkzeug für Abschnitt 6.
-4. **BLE-Gerüst** mit `bleak`, gegen die nsg-Beschreibung gebaut.
+2. **`skyshutter props --dump/--diff`** — das Werkzeug für Abschnitt 6.
+3. **Entschlüsselung der WLAN-Zugangsdaten** — Blowfish-CBC, Schlüssel aus
+   Werten ableitbar, die über BLE sichtbar sind. Der aufwendigste Posten, aber
+   der einzige Weg zu einem Passwort, das bei jeder Verbindung wechselt.
+4. **`skyshutter pcap datei.pcap`** — PTP/IP aus einem Mitschnitt zerlegen.
+   Nachrangig geworden: Ein Mitschnitt des WLAN-Verkehrs setzt voraus, dass die
+   Kamera ihr WLAN öffnet — genau das ist das offene Gate.
 5. **Reconnect-Logik** gegen einen Simulator, der Verbindungsabbrüche simuliert.
 
 ## 9. Repo-Konventionen

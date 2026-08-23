@@ -18,9 +18,18 @@ Messprotokoll — was an der eigenen Kamera gemessen wurde, steht ausschließlic
 
 ## 1. Die Kernfrage und was sie inzwischen wahrscheinlich macht
 
-Die Arbeitshypothese lautet: Die Coolpix spricht im Fernsteuerungsmodus PTP/IP auf
-TCP 15740 mit Nikon-Vendor-Opcodes. Verifiziert ist das nicht. Drei Befunde
-stützen sie inzwischen deutlich stärker als noch im Vormonat.
+> **Stand 23.08.2026 — die Hypothese dieses Abschnitts ist zur Hälfte
+> bestätigt.** Dass die Kamera **PTP mit Nikon-Vendor-Opcodes** spricht, ist
+> gemessen: 38 Operationen über USB ausgelesen, darunter Live View, Zoom und
+> Auslöser. Offen ist nur noch, ob sie dasselbe **über TCP 15740** anbietet —
+> der Port steht im Herstellercode, geöffnet hat sie ihn für uns noch nie.
+> Alles Gemessene: [referenz.md](referenz.md).
+>
+> Der folgende Abschnitt ist der Rechercheweg dorthin und bleibt als solcher
+> stehen.
+
+Die Arbeitshypothese lautete: Die Coolpix spricht im Fernsteuerungsmodus PTP/IP auf
+TCP 15740 mit Nikon-Vendor-Opcodes. Drei Befunde stützten sie damals.
 
 **Erstens — die P1100 antwortet auf den Live-View-Opcode.** libgphoto2-Issue
 [#1201](https://github.com/gphoto/libgphoto2/issues/1201) (geschlossen 11.01.2026)
@@ -156,6 +165,12 @@ Ohne Messung ist beides gleich plausibel. [UNBELEGT]
 
 Ob die Coolpix im WLAN-Remote-Modus tatsächlich einen PTP/IP-Server auf 15740
 öffnet, ist **durch keinen Mitschnitt belegt**. [UNBELEGT]
+
+> **Nachtrag 23.08.2026:** Der Port `15740` steht als Konstante `0x3d7c` im
+> Verbindungsaufbau der Hersteller-App, zusammen mit der Initiator-GUID
+> `00112233-4455-6677-8899-AABBCCDDEEFF` und dem Namen `Android Device`. Das
+> belegt, dass die App ihn erwartet — nicht, dass die Kamera ihn öffnet.
+> Die Frage bleibt offen, ist aber nicht mehr ganz unbelegt.
 
 ### Kamera-IP
 
@@ -379,7 +394,19 @@ einziger Kanal offen zu bleiben.
 die gesamte BLE- und WLAN-Strecke tot. Als Rückfallebene brauchbar, als
 Erstwahl beendet es das Projekt in seiner jetzigen Form.
 
-### USB-PTP — der billigste Erkenntnisgewinn, aber unbelegt
+### USB-PTP — durchgeführt, mit eindeutigem Ergebnis
+
+> **Nachtrag 23.08.2026:** Der hier beschriebene Test wurde gemacht. Ergebnis:
+> **PTP über USB funktioniert vollständig** — die gesamte Operationsliste in
+> [referenz.md](referenz.md) stammt daher. **Live View über USB funktioniert
+> nicht**, und zwar prinzipiell: Die Kamera zieht beim Anstecken das Objektiv
+> ein und meldet über Property `0xD1A4` Bit 24, dass Live View gesperrt ist.
+> `ChangeCameraMode` lässt sich nicht dagegen setzen.
+>
+> Damit ist auch die Frage der beiden Fremdberichte beantwortet, die genau hier
+> hängengeblieben sind. Der ursprüngliche Text bleibt als Herleitung stehen.
+
+Die Ausgangslage war:
 
 Issue #1201 zu diesem Modell und Issue #780 zum P950 zeigen dasselbe Bild:
 Browsing und Download funktionieren, `--capture-preview` scheitert mit

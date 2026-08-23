@@ -37,24 +37,55 @@ Drei mögliche Ausgänge:
 
 Bei Erfolg gehört die Ausgabe von `skyshutter info` in `protokoll.md`.
 
-## Schritt 2 — BLE-Handshake mitschneiden
+## Schritt 2 — den BLE-Verkehr sehen
 
-Auf dem Android-Handy:
+> ### ⚠ Der naheliegende Weg funktioniert nicht
+>
+> ~~Entwickleroptionen → Bluetooth-HCI-Snoop-Log aktivieren, Bugreport ziehen,
+> `btsnoop_hci.log` in Wireshark öffnen.~~
+>
+> **Am 22.08.2026 gemessen und verworfen.** Die Aufzeichnung lief nachweislich
+> (`dumpsys bluetooth_manager` meldete `sSnoopLogSettingAtEnable = FULL`), und
+> der Bugreport enthielt **310 Snoop-Dateien — alle exakt 16 Byte groß**, also
+> nur Header ohne ein einziges Paket. Der Gerätehersteller filtert die Nutzdaten
+> über `INIT_gd_hal_snoop_logger_filtering`, und beide Wege, das abzuschalten,
+> sind ohne Root gesperrt: `device_config put` scheitert mit `SecurityException`,
+> `setprop persist.bluetooth.btsnoopenable` mit `Failed to set property`.
+>
+> Wer diesem Weg folgt, verliert einen Abend. Details in
+> [FINDINGS.md](FINDINGS.md#widerlegtes).
 
-1. Entwickleroptionen → **Bluetooth-HCI-Snoop-Log** aktivieren, Bluetooth aus/ein.
-2. SnapBridge: Kamera entkoppeln, neu koppeln, dann Fernsteuerung starten
-   (der Übergang BLE → WiFi ist der interessante Teil).
-3. Bugreport ziehen (`adb bugreport`) und `btsnoop_hci.log` extrahieren.
-4. In Wireshark öffnen, auf `bthci_acl` / `btatt` filtern.
+**Was stattdessen funktioniert hat**, in der Reihenfolge des Aufwands:
 
-Worauf zu achten ist:
-* Welcher GATT-Characteristic überträgt SSID/Passphrase des Kamera-APs?
-* Wird eine Client-ID/GUID übertragen — und ist es dieselbe, die später im
-  PTP/IP-`InitCommandRequest` steht?
-* Referenz für das Format: [hurui200320/nsg](https://github.com/hurui200320/nsg),
-  Client-ID-Rekonstruktion: [HowenXu/snapbridge-id-extractor](https://github.com/HowenXu/snapbridge-id-extractor).
+**a) Selbst mit der Kamera sprechen.** `tools/ble-probe.py` liest den gesamten
+GATT-Baum und alle lesbaren Werte aus, ohne Kopplung. Das hat die
+Characteristic-Tabelle in [referenz.md](referenz.md) geliefert — vollständiger,
+als ein Mitschnitt es gekonnt hätte, weil die Hersteller-App sechs der
+Characteristics nie anfasst.
 
-Ergebnis: die GUID, die `skyshutter --guid ...` präsentieren muss.
+**b) Sich zwischen App und Kamera setzen.** `tools/ble-proxy.py` greift die
+Kamera zuerst, wodurch die App nur noch den Proxy findet, und protokolliert
+jeden Byte in beide Richtungen. Damit ist der vollständige Handshake der App
+gegen die echte Kamera mitgeschnitten.
+
+**c) Die App auseinandernehmen.** Der ergiebigste Weg. Die APK vom eigenen
+Gerät ziehen (`adb pull`), mit `baksmali` zerlegen und nach den
+UUID-Konstanten suchen:
+
+```bash
+adb shell pm path com.nikon.snapbridge.cmru
+adb pull <pfad> snapbridge.apk
+unzip -o snapbridge.apk -d extracted
+java -jar baksmali.jar d extracted/classes.dex -o smali
+grep -rl "00002005-3DD4" smali/
+```
+
+Das hat den WLAN-Auslöser, das Frame-Format des Livebildes und die
+Verschlüsselung der Zugangsdaten ergeben. Rechtlich gedeckt durch **§ 69e
+UrhG** — Dekompilierung zur Herstellung der Interoperabilität, wenn die
+Informationen nicht anders zugänglich sind. Genau das ist hier belegt.
+
+Gelesen wird zur Verifikation, übernommen wird nichts.
 
 ## Schritt 3 — WiFi-Traffic mitschneiden
 
