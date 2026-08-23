@@ -10,7 +10,27 @@ PTP/IP (Annex von ISO 15740) tunnelt PTP über TCP, Standardport **15740**. Es
 werden zwei Verbindungen zum selben Port aufgebaut:
 
 * **Command/Data-Kanal** — Operationen und Datenphasen
-* **Event-Kanal** — asynchrone Events der Kamera
+* **Event-Kanal** — Handshake und Keepalive
+
+> **Korrektur, 23.08.2026:** Hier stand „Event-Kanal — asynchrone Events der
+> Kamera". Das ist in der Praxis falsch. Die Hersteller-App **parst den
+> Ereignis-Pakettyp nirgends**; sie pollt Ereignisse stattdessen mit einer
+> PTP-Operation (`0x941C`, ersatzweise `0x90C7`) alle fünf Sekunden. Der
+> zweite Kanal wird trotzdem gebraucht — die Kamera erwartet seinen
+> Init-Handshake, und der Keepalive läuft darüber.
+
+**Keepalive:** Ping (Pakettyp `13`) über den **Ereigniskanal**, alle
+**9 Sekunden**, Antwort binnen 10 erwartet. Nur auf fremde Pings zu antworten
+genügt nicht — die Gegenseite sendet keine. `PtpIpConnection.ping()`.
+
+**Reihenfolge des Aufbaus:** TCP zum Kommandokanal (`TCP_NODELAY`) →
+InitCommandRequest → **zweite TCP** → InitEventRequest mit der
+Verbindungsnummer → Keepalive starten → `GetDeviceInfo`. `OpenSession` gehört
+nicht dazu. Beim Trennen schickt die App **kein** `CloseSession`, sondern
+schließt beide Sockets.
+
+**`SessionAlreadyOpen` (`0x201E`) ist kein Fehler**, sondern gilt wie `OK` —
+die App arbeitet mit der angefragten Kennung weiter.
 
 Rahmenformat, alles Little Endian:
 
@@ -85,114 +105,91 @@ wahrscheinlicher Adressen durchzuprobieren.
 
 Reverse-engineert, nicht von Nikon veröffentlicht; Werte aus `libgphoto2`:
 
-| Opcode | Name | Zweck |
-|---:|---|---|
-| `0x90C0` | Capture | Auslösen (ältere Modelle) |
-| `0x90C1` | AfDrive | Autofokus |
-| `0x90C2` | SetControlMode | Steuerungsmodus umschalten |
-| `0x90C7` | GetEvent | Event-Queue leeren |
-| `0x90C8` | DeviceReady | Busy-Polling nach Kommandos |
-| `0x90E0` | GetDevicePTPIPInfo | PTP/IP-spezifische Geräteinfos |
-| `0x9200` | GetPreviewImg | Vorschaubild nach Auslösung |
-| `0x9201` | StartLiveView | Live View starten |
-| `0x9202` | EndLiveView | Live View beenden |
-| `0x9203` | GetLiveViewImg | Einzelnes Live-View-Bild |
-| `0x9204` | MfDrive | Manueller Fokus / Fokusschritte |
-| `0x9205` | ChangeAfArea | AF-Feld setzen |
-| `0x9207` | InitiateCaptureRecInMedia | Auslösen mit Speicherziel |
-| `0x920A` / `0x920B` | Start/EndMovieRecInCard | Videoaufnahme |
+Die Spalte ganz rechts sagt, ob **diese** Kamera den Opcode anbietet — gemessen
+am 23.08.2026. Die Tabelle als Ganzes ist die allgemeine Nikon-Liste; wer sie
+für eine Fähigkeitsliste hält, baut auf Sand.
+
+| Opcode | Name | Zweck | hier? |
+|---:|---|---|:-:|
+| `0x90C0` | Capture | Auslösen (ältere Modelle) | nein |
+| `0x90C1` | AfDrive | Autofokus | **ja** |
+| `0x90C2` | SetControlMode / ChangeCameraMode | Steuerungsmodus umschalten | **ja** |
+| `0x90C7` | GetEvent | Ereignisse abholen | nein |
+| `0x90C8` | DeviceReady | Busy-Polling nach Kommandos | **ja** |
+| `0x90E0` | GetDevicePTPIPInfo | PTP/IP-spezifische Geräteinfos | nein |
+| `0x9200` | GetPreviewImg | Vorschaubild nach Auslösung | nein |
+| `0x9201` | StartLiveView | Live View starten | **ja** |
+| `0x9202` | EndLiveView | Live View beenden | **ja** |
+| `0x9203` | GetLiveViewImg | Einzelnes Live-View-Bild | **ja** |
+| `0x9204` | MfDrive | Manueller Fokus | nein |
+| `0x9205` | ChangeAfArea | AF-Feld setzen | **ja** |
+| `0x9207` | InitiateCaptureRecInMedia | Auslösen mit Speicherziel | **ja** |
+| `0x920A` / `0x920B` | Start/EndMovieRecInCard | Videoaufnahme | nein |
+| `0x9016` | ZoomControl | optischer Zoom | **ja** |
+| `0x941C` | GetEvent, neuere Fassung | Ereignisse abholen | **ja** |
 
 **Maßgeblich ist immer `DeviceInfo.operations_supported`.** `skyshutter info`
 gibt genau diese Liste aus; jede High-Level-Methode prüft sie, bevor sie einen
 Vendor-Opcode absetzt.
 
-### Gemessen am 23.08.2026 über USB
+### Was diese Kamera davon anbietet
 
-Firmware `V1.0`, 38 Operationen, 20 Properties, Capture-Format `3801`
-(EXIF/JPEG). Erhoben mit `src/skyshutter/ptpusb.py`, nicht abgeschrieben.
+Am 23.08.2026 über USB ausgelesen: Firmware `V1.0`, **38 Operationen**,
+20 Properties, Capture-Format `3801` (EXIF/JPEG). Erhoben mit
+`src/skyshutter/ptpusb.py`, nicht abgeschrieben.
 
-```
-1001 1002 1003 1004 1005 1006 1007 1008 1009 100a 100b 100c 100d 100e 100f
-1014 1015 1016 101b
-9016 90c1 90c2 90c4 90c8 9201 9202 9203 9205 9207 941c 941e 9520 9521 9522
-9801 9802 9803 9805
-```
+> **Die vollständigen Listen stehen in [referenz.md](referenz.md)** —
+> Operationen, Properties, Ereignisse und Fehlercodes, jeweils mit Angabe der
+> Herkunft. Dieses Dokument beschreibt den Transport; was ein einzelnes Gerät
+> kann, gehört dorthin. Zwei Tabellen mit denselben Zahlen laufen früher oder
+> später auseinander.
 
-Davon belegt: `90c1` AfDrive, `90c2` SetControlMode, `90c4` GetLargeThumb,
-`90c8` DeviceReady, **`9201` StartLiveView**, **`9202` EndLiveView**,
-**`9203` GetLiveViewImg**, `9205` ChangeAfArea, `9207`
-InitiateCaptureRecInMedia. `9801`–`9805` sind MTP-Objekt-Properties.
-Unbekannt bleiben `9016`, `941c`, `941e`, `9520`, `9521`, `9522`.
+Drei Befunde, die den Client unmittelbar betreffen:
 
-**Nicht vorhanden:** `90c0` Capture, `90c7` GetEvent, `90e0`
-GetDevicePTPIPInfo, `9200` GetPreviewImg, `9204` MfDrive, `920a`/`920b`
-Movie. Der manuelle Fokus über `MfDrive` fehlt dieser Kamera also — für
-Astro-Fokussierung bleibt nur `AfDrive` und `ChangeAfArea`.
-
-Properties: `5001` Batterie, `5007` Blende, **`5008` Brennweite (schreibbar,
-24–3000 mm)**, `500a` Fokusmodus, `500e` Belichtungsprogramm, `500f` ISO,
-`5010` Belichtungskorrektur, `5011` Datum/Zeit, `5013`, dazu die Vendor-Reihe
-`d05d d0e1 d0e3 d0e4 d100 d1a2 d1a4 d1f1 d303 d406 d407`.
+- **`0x90C7 GetEvent` fehlt dieser Kamera**, `0x941C` ist der Ersatz — mit
+  einem anderen Antwortformat. Ein Client, der nur den älteren Opcode kennt,
+  bekommt still eine leere Ereignisliste statt eines Fehlers.
+- **`0x9204 MfDrive` fehlt.** Manueller Fokus über PTP ist nicht möglich.
+- **`0x920C` fehlt.** Der Bulb-Weg der Hersteller-App ist nicht verfügbar;
+  lange Belichtungen laufen über die Verschlusszeit-Property `0xD100`.
 
 ## Live-View-Frames
 
 `GetLiveViewImg` liefert einen Header vor dem JPEG. Bei diesem Modell ist er
-**384 Byte lang und big-endian** — anders herum als der PTP-Rahmen drumherum.
-Aus der Hersteller-App gelesen, 23.08.2026:
+**384 Byte lang und big-endian** — anders herum als der PTP-Rahmen darum. Er
+trägt Bildmaße, Sensorgröße, sichtbaren Ausschnitt, AF-Felder und einen
+Lagesensor.
 
-| Offset | Typ | Feld |
-|---|---|---|
-| `0x04` | u32 | JPEG-Länge (nur als Plausibilitätsprüfung, s.u.) |
-| `0x08` / `0x0A` | s16 | Bildbreite / -höhe |
-| `0x0C` / `0x0E` | s16 | Sensor-Gesamtgröße |
-| `0x10`–`0x16` | 4× s16 | sichtbarer Ausschnitt: Breite, Höhe, Mitte x, Mitte y |
-| `0x18`–`0x1E` | 4× s16 | AF-Feld, dieselben vier Werte |
-| `0x25` | s8 | Drehrichtung |
-| `0x26` / `0x27` | s8 | Fokus- und Zoomantrieb (nur Status) |
-| `0x2E` | s16 | Selbstauslöser-Restzeit |
-| `0x30` / `0x31` | s8 | Fokuszustand, Fokusfähigkeit |
-| `0x34` / `0x38` / `0x3C` | s32 | **Lagesensor: Roll, Pitch, Yaw** |
-| `0x40` | s32 | Video-Restzeit |
-| `0x46` / `0x47` | u8 | Anzahl Gesichtsfelder, aktives Feld |
-| `0x48`–`0x15F` | 35× 8 B | AF-Feld-Array |
-| `0x180` | | **JPEG** |
+> **Das vollständige Feldlayout und die Startsequenz stehen in
+> [referenz.md](referenz.md)**, Abschnitt Live View.
 
-**Belichtungswerte stehen nicht im Header** — die kommen über Properties. Einen
-Zoomfaktor gibt es auch nicht; er folgt aus Sensorgröße geteilt durch sichtbaren
-Ausschnitt.
+Zwei Dinge, die beim Implementieren zählen:
 
-**Das Längenfeld ist unzuverlässig.** Bei Kameras, die `0x9521` anbieten — und
-diese tut es — nimmt die App stattdessen den Rest des Puffers. `skyshutter`
-schneidet deshalb 384 Byte ab und sucht im Rest den SOI-Marker `FF D8 FF` bis
-zum letzten `FF D9`. Das funktioniert auch bei den Modellen, für die 8 oder
-128 Byte berichtet wurden.
+- **Das Längenfeld an Offset 4 ist unzuverlässig.** Bei Kameras, die `0x9521`
+  anbieten — und diese tut es — nimmt die Hersteller-App stattdessen den Rest
+  des Puffers. `skyshutter` schneidet deshalb 384 Byte ab und sucht im Rest den
+  SOI-Marker `FF D8 FF` bis zum letzten `FF D9`. Das funktioniert auch bei den
+  Modellen, für die 8 oder 128 Byte Header berichtet wurden.
+- **`0xD1A4` vor dem Start lesen.** Die Property nennt als Bitmaske, warum Live
+  View gesperrt ist; Bit 24 heißt „Objektiv eingefahren" und ist der Grund,
+  warum es über USB grundsätzlich nicht geht. In `nikon.py` als
+  `LiveViewProhibit`.
 
-### Live View starten
+## Was am Transport offen bleibt
 
-Die App prüft der Reihe nach, bevor sie `0x9201` schickt:
+Die gerätebezogenen Fragen stehen gesammelt in
+[FINDINGS.md](FINDINGS.md#offene-fragen); hier nur, was den Transport selbst
+betrifft:
 
-1. `0xD0BD` Fernauslöse-Sperre lesen
-2. **`0xD1A4` Live-View-Sperre lesen — muss 0 sein**
-3. `0xD09C` Objektivwarnung lesen
-4. Kameramodus umschalten
-5. Steht `0x5013` auf Serienbild, auf Einzelbild zurückstellen
-6. modellabhängig 500 ms warten
-7. `0xD1A2` prüfen — läuft Live View schon, `0x9201` überspringen
-8. `0x9201` (**parameterlos**), dann `0x90C8` pollen
-
-Bei `DeviceBusy` wiederholt sie `0x9201` bis zu zehnmal mit 500 ms Abstand.
-Danach holt ein Timer alle **66 ms** ein Bild — rund 15 Bilder je Sekunde.
-Nach fünf Fehlern in Folge bricht sie ab.
-
-`0xD1A4` ist eine **Bitmaske**, kein Fehlercode: Bit 24 ist „Objektiv
-eingefahren", daneben unter anderem Bit 23 ausgeschaltet, Bit 17 zu heiß, Bit 8
-Batterie leer, Bit 19 Kartenfehler. In `nikon.py` als `LiveViewProhibit`.
-
-## Offene Fragen für die P1100
-
-- [ ] Antwortet die Kamera im Remote-Modus überhaupt auf TCP 15740?
-- [ ] Wird eine ungepaarte GUID akzeptiert, oder ist der BLE-Handshake Pflicht?
-- [ ] Welche Vendor-Opcodes stehen in `operations_supported`?
-- [ ] Live View vorhanden — und mit welcher Header-Länge und Auflösung?
-- [ ] Gibt es Vendor-Properties für den 125×-Zoom (die eigentliche Motivation)?
-- [ ] Verträgt die Kamera parallele Sessions neben SnapBridge?
+- [ ] **Antwortet die Kamera über WLAN auf TCP 15740?** Der Port steht im
+      Herstellercode, geöffnet hat sie ihn für uns noch nie. Über USB ist PTP
+      bestätigt — das sagt über den TCP-Weg nichts.
+- [ ] **Wird eine beliebige GUID akzeptiert?** Die Hersteller-App benutzt für
+      alle Installationen dieselbe, was dagegen spricht, dass die Kamera
+      darüber unterscheidet. Ungeprüft.
+- [ ] **Verträgt die Kamera eine zweite Sitzung neben der App?**
+- [ ] **Der Gerätename im Init-Paket:** Die App kodiert ihn als UTF-16 **BE**,
+      liest ihn selbst aber als LE zurück — Encoder und Decoder widersprechen
+      sich, und die Kamera nimmt es offenbar hin. `skyshutter` sendet
+      spezifikationskonform LE. Falls ein Verbindungsaufbau daran scheitert,
+      ist BE der erste Gegenversuch.

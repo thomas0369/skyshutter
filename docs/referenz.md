@@ -243,7 +243,7 @@ unterscheidet ihre Clients also nicht über die GUID.
 |---|---|---|
 | `9016` | **ZoomControl** | `[weitwinkel, tele]`, nur einer belegt |
 | `90C1` | AfDrive | keine |
-| `90C2` | ChangeCameraMode | Modus |
+| `90C2` | ChangeCameraMode (bei libgphoto2: SetControlMode) | Modus |
 | `90C4` | GetLargeThumb | Handle |
 | `90C8` | DeviceReady | keine |
 | `9201` | StartLiveView | **keine** |

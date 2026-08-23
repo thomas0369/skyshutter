@@ -13,8 +13,12 @@ Fernsteuerung führt bisher über die Hersteller-App auf dem Telefon.
 Ausführlich, mit den Rechnungen dahinter und zwei korrigierten Irrtümern:
 **[docs/einfuehrung.md](docs/einfuehrung.md)**.
 
-**Python, ausschließlich Standardbibliothek.** Optionale Zusätze nur für
-Werkzeuge, nicht für den Client.
+**Python, ohne Abhängigkeiten.** Der Client über WLAN kommt mit der
+Standardbibliothek aus. Zwei Module holen sich mehr, aber erst wenn man sie
+benutzt und mit sauberem Fehler, wenn es fehlt: `ptpusb.py` braucht `pyusb`
+für den Kabelweg, der Simulator nutzt `pillow`, falls vorhanden, für echte
+JPEGs. Die Werkzeuge in `tools/` haben eigene Voraussetzungen — siehe
+[tools/README.md](tools/README.md).
 
 ---
 
@@ -121,6 +125,7 @@ src/skyshutter/
   discovery.py    Kamera und Steuerport im Netz finden
   mjpeg.py        Livebild als HTTP-Stream
   btsnoop.py      Bluetooth-Mitschnitte auswerten
+  config.py       GUID und Voreinstellungen in ~/.config/skyshutter/
   simulator.py    Kamera-Nachbau für Entwicklung ohne Hardware
   cli.py          Kommandozeile
 

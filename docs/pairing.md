@@ -70,7 +70,7 @@ hinaus ist Warten darauf, dass jemand am Gerät steht.
 9 Sekunden. Die früher notierten 35 Sekunden funktionierten auch, sind aber
 kein Ziel — die Kamera verlässt den Kopplungsmodus von selbst.
 
-## Die fünf Fallen
+## Die sieben Fallen
 
 **1. Der Beacon hängt am Menü.** Die Kamera advertised nur, solange *Mit
 Smartgerät verbinden* auf ihrem Display offen steht. „Nicht gefunden" heißt
@@ -134,10 +134,13 @@ der die Hersteller-App im Handy-Log klassisch gekoppelt hat — es ist die
 
 ## Zeitfenster
 
-Zwischen dem Ende des Handshakes und dem Inquiry vergehen rund 35 Sekunden.
-Das reicht — beide erfolgreichen Läufe hatten diesen Abstand. Der Zahlencode
-erscheint danach, und für die Bestätigung an der Kamera bleiben etwa
-**30 Sekunden**, bevor Windows mit `AUTHENTICATION_FAILURE` abbricht.
+Zwischen dem Ende des Handshakes und dem Inquiry liegen im schnellsten
+gemessenen Lauf **9 Sekunden** (22.08.2026, 21:56). Frühere Läufe mit rund
+35 Sekunden Abstand funktionierten ebenfalls — kurz ist aber besser, weil die
+Kamera den Kopplungsmodus von selbst verlässt.
+
+Der Zahlencode erscheint danach, und für die Bestätigung an der Kamera bleiben
+etwa **30 Sekunden**, bevor Windows mit `AUTHENTICATION_FAILURE` abbricht.
 
 `--quick` überspringt den Werte-Dump nach der Authentifizierung; der kostet
 sonst zusätzliche zwanzig Sekunden.

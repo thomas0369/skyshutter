@@ -35,6 +35,9 @@ class NikonOperation(IntEnum):
     GET_FILE_INFO_IN_BLOCK = 0x9011
     CAPTURE = 0x90C0
     AF_DRIVE = 0x90C1
+    #: libgphoto2 calls this SetControlMode; the vendor app calls it
+    #: ChangeCameraMode and also uses it around starting and stopping live
+    #: view. Setting it to 1 over USB was refused by this camera.
     SET_CONTROL_MODE = 0x90C2
     DEL_IMAGE_SDRAM = 0x90C3
     GET_LARGE_THUMB = 0x90C4
