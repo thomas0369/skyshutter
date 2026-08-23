@@ -19,7 +19,7 @@ def _ad(*structures: bytes) -> bytes:
 def test_parse_ad_extracts_name_uuid_and_manufacturer():
     name = b"\x05\x09P110"
     uuid16 = b"\x03\x03\x99\x03"
-    mfg = b"\x0a\xff\x99\x03" + bytes.fromhex("01c96e6b0001")
+    mfg = b"\x09\xff\x99\x03" + bytes.fromhex("01c96e6b0001")
     parsed = bt_listen.parse_ad(_ad(name, uuid16, mfg))
     assert parsed["names"] == ["P110"]
     assert "0399" in parsed["uuids"]
