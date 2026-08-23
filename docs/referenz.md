@@ -202,6 +202,65 @@ Funk-Hochlauf. Der eigentliche Vorgang dauert 15 Sekunden.
 
 ## 3. PTP
 
+### Was sich fernsteuern lässt
+
+Der nutzerorientierte Überblick. Grundlage sind die gemessenen Operationen und
+Properties (unten im Detail); die Spalte **Stand** trennt, was an der Hardware
+belegt ist, von dem, was aus der App erschlossen und im Client implementiert,
+aber über WLAN noch nicht ausgeführt wurde.
+
+**Aufnahme**
+
+| Funktion | Weg | Stand |
+|---|---|---|
+| Auslösen | `0x9207 (auslöseart, ziel)` | Opcode **[M]** |
+| — mit Autofokus | Auslöseart `-2` | erschlossen |
+| — Ziel Karte / Zwischenspeicher / beides | Parameter `0` / `1` / `2` | App nutzt nur `0` |
+| Aufnahmemodus (Einzel/Serie/Selbstauslöser) | Property `0x5013` | **[M]** |
+| „fertig"-Signal | `0x90C8` pollen, Ereignis `0x4002` | erschlossen |
+| Bild holen (1-MiB-Blöcke, fortsetzbar) | `0x101B` | **[M]** |
+| Vorschau in 8 MP | `0x9522` | Opcode **[M]** |
+
+**Optik**
+
+| Funktion | Weg | Stand |
+|---|---|---|
+| **Optischer Zoom** (24–3000 mm) | `0x9016 [wide, tele]` | Opcode **[M]**, Wirkung offen |
+| Autofokus auslösen | `0x9206` | **[M]** |
+| AF-Messfeld setzen | `0x9205 (x, y)` bzw. `0xD05D` | **[M]** |
+| Fokusmodus (AF-S/C/MF) | Property `0x500A` | **[M]** |
+
+**Belichtung**
+
+| Funktion | Weg | Stand |
+|---|---|---|
+| Verschlusszeit | `0xD100` (Zähler/Nenner) | **[M]** |
+| Blende | `0x5007` | **[M]** |
+| ISO | `0x500F` | **[M]** |
+| Belichtungskorrektur | `0x5010` | **[M]** |
+| Programmmodus (P/A/S/M) | `0x500E` | **[M]** |
+
+**Live View** — `0x9201`/`0x9203`/`0x9202` **[M]**. Der Frame trägt neben dem
+Bild: Bildmaße, sichtbaren Ausschnitt (= Zoomfaktor), AF-Feld und einen
+Lagesensor (Roll, Pitch, Yaw).
+
+**Nicht möglich an diesem Modell:**
+- **Manueller Fokus über PTP** — `0x9204` MfDrive fehlt. Nur Autofokus plus
+  Messfeld. Für schwache Astro-Objekte ein echter Verlust.
+- **Bulb-Auslöser** — `0x920C` fehlt. Lange Belichtungen nur als feste
+  Verschlusszeit über `0xD100`; die Obergrenze ist ungemessen.
+- **Intervallometer im Protokoll** — gibt es nicht. Serien muss der Client
+  selbst fahren (auslösen, Property ändern, warten).
+- **Auslösen über Bluetooth** — Feature-Bit 11 ist null (s. Abschnitt 1).
+
+**Ungeklärt, nur an der Kamera zu erschließen:** `0x941C`, `0x9520`, `0x9521`
+und die BLE-Characteristics `0x2082`–`0x2087`, die keine Quelle und nicht
+einmal die Hersteller-App kennt.
+
+**Wichtig:** Keiner dieser Befehle ist bisher über WLAN an der echten Kamera
+gelaufen — nur über USB (die Abfragen) und gegen den Simulator (alles andere).
+Der Beweis steht aus, bis der Access Point läuft.
+
 ### Verbindungsaufbau **[H]**
 
 ```

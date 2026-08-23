@@ -30,13 +30,15 @@ JPEGs. Die Werkzeuge in `tools/` haben eigene Voraussetzungen — siehe
 | **Live View** | **vorhanden** — `9201`, `9202`, `9203` stehen in `operations_supported` |
 | **Zoom** | Operation bekannt (`9016`), an der Hardware noch nicht ausgelöst |
 | **Kopplung** | **läuft reproduzierbar** — 40 Sekunden vom Funk-Reset bis zum Bond |
-| **WLAN** | Auslöser bekannt (`0x01` auf `0x2005`), Wirkung noch nicht gemessen |
+| **Zugangsdaten** | **geknackt** — SSID und Passwort per `skyshutter wifi` aus der Kopplung entschlüsselbar |
+| **WLAN-AP** | **offenes Gate** — `0x01` auf `0x2005` startet den Access Point nicht allein |
 
 Alles Gemessene steht in [docs/referenz.md](docs/referenz.md), der Weg dorthin
 im [Messprotokoll](docs/FINDINGS.md).
 
 **Was heute schon geht:** über USB die Kamera abfragen, ihre Fähigkeiten
-auslesen, Bilder holen. **Was noch nicht geht:** das Livebild — dafür muss die
+auslesen, Bilder holen; die WLAN-Zugangsdaten aus einer Kopplung entschlüsseln.
+**Was noch nicht geht:** das Livebild — dafür muss die
 Kamera ihr WLAN öffnen, und dieser Auslöser ist zwar bekannt, aber ungetestet.
 
 ---

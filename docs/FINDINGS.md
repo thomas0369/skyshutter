@@ -23,12 +23,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | 1 abgeschlossen — **PTP ist bestätigt**, Live View existiert. Phase 2: das Bild holen |
-| **Erreicht** | 38 Operationen und 20 Properties gemessen · Kopplung reproduzierbar in 40 s · zweiter Transport (USB) im Repo · Protokoll der Hersteller-App gelesen |
-| **Offenes Gate** | `0x01` auf `0x2005` **startet den AP nicht allein** (23.08. gemessen). Was fehlt noch zum AP-Start? |
-| **Erreicht 23.08.** | **LsSec geknackt** — WLAN-Zugangsdaten aus dem BLE-Chiffrat in reinem Python entschlüsselbar, gegen zwei Paare verifiziert |
-| **Nächster Schritt** | `src/skyshutter/lssec.py` sauber bauen (eigener Blowfish, stdlib-only, synthetischer Test) |
-| **Danach** | AP-Start klären: `0x01` auf `0x2005` genügt nicht allein — was fehlt? |
+| **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
+| **Offenes Gate** | **AP-Start.** `0x01` auf `0x2005` startet den Access Point nicht allein (23.08. gemessen). Was die App danach noch tut, ist offen |
+| **Nächster Schritt** | `ble-proxy.py` zwischen App und Kamera hängen und die App die Fernaufnahme starten lassen — der Mitschnitt zeigt den fehlenden Schritt |
+| **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
+| **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-23 |
 

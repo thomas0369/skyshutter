@@ -15,7 +15,7 @@ Die Arbeitsweise steht in [playbook.md](playbook.md), der belegte Stand in
 | **2** Fähigkeiten auslesen | Vendor-Opcodes in der Liste | **erreicht** — 38 Operationen, 20 Properties |
 | **3** Live View und Auslöser | ein Bild im Browser | **offen** — Opcodes vorhanden, Bild fehlt |
 | **4** Zoom, Belichtung, Fokus | Zoomfahrt per Kommando | **teilweise** — `0x9016` bekannt, ungetestet |
-| **5** BLE-Pfad | `skyshutter wake` startet das WLAN | **fast** — der Auslöser ist bekannt, die Kopplung läuft |
+| **5** BLE-Pfad | WLAN startet ohne die App | **teilweise** — Kopplung läuft, Zugangsdaten geknackt, aber `0x01` auf `0x2005` startet den AP nicht allein |
 | **6** Robustheit | vier Stunden Intervall ohne Handgriff | offen |
 
 **Die Reihenfolge hat sich gedreht.** Der Plan ging davon aus, dass Phase 1 über
