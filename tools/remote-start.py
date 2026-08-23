@@ -193,17 +193,19 @@ async def run(args) -> int:
         deadline = time.monotonic() + args.hold
         joined = False
         while time.monotonic() < deadline:
-            if creds and args.join:
-                if try_join(creds.ssid):
-                    joined = True
-                    gw = wlan_gateway(creds.ssid)
-                    log(f"  WLAN verbunden mit {creds.ssid!r}  Kamera-IP≈{gw or '?'}")
-                    break
-            elif creds and scan_wifi_for(creds.ssid):
+            visible = scan_wifi_for(creds.ssid) if creds else False
+            if creds and args.join and visible and try_join(creds.ssid):
+                joined = True
+                gw = wlan_gateway(creds.ssid)
+                log(f"  WLAN verbunden mit {creds.ssid!r}  Kamera-IP≈{gw or '?'}")
+                break
+            if creds and not args.join and visible:
                 log(f"  AP sichtbar: {creds.ssid!r}")
                 break
+            elapsed = args.hold - (deadline - time.monotonic())
+            log(f"  +{elapsed:.0f}s: AP {'SICHTBAR' if visible else 'nicht sichtbar'}"
+                f"{' (Join-Versuch läuft)' if visible and args.join else ''}")
             await asyncio.sleep(4.0)
-            log(f"  +{args.hold - (deadline - time.monotonic()):.0f}s: warte auf AP/Join")
         if not client.is_connected:
             log("  ! BLE getrennt (Kamera schaltet auf Funk um -- kann normal sein)")
 
@@ -272,8 +274,9 @@ def delete_wifi_profile(ssid: str) -> None:
 
 
 def _free_wlan_interface() -> str | None:
-    """Name of a WLAN interface not already connected elsewhere, so joining the
-    camera does not disturb the host's own network (this rig has two adapters)."""
+    """Name of a disconnected WLAN interface. This rig has a Qualcomm DBS chip
+    with two real interfaces, so the free one can join the camera AP while the
+    host keeps its own network on the other. Falls back to None (default adapter)."""
     out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
                          capture_output=True, text=True, timeout=15).stdout
     name = None
