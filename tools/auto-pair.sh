@@ -100,8 +100,14 @@ while true; do
     log "  Inquiry-Treff: $TARGET"
 
     log "  PAIR -> CODE AM KAMERA-DISPLAY JETZT BESTAETIGEN"
-    bluetoothctl trust "$TARGET" >/dev/null 2>&1
-    bluetoothctl --timeout 30 pair "$TARGET" >/dev/null 2>&1
+    # bt-pair.py (D-Bus Device1.Pair) statt bluetoothctl pair: bluetoothctl
+    # registriert einen eigenen Session-Agent, der die SSP-Bestaetigung bei
+    # geschlossenem stdin in ~2 ms auto-ablehnt (gemessen 24.08., FINDINGS
+    # "Nacht II") -- unser DisplayYesNo-Agent kommt dann nie dran. bt-pair.py
+    # ruft Pair() direkt auf dem Systembus auf und laesst den agent dran;
+    # es bringt seinen eigenen Retry (3x) mit. System-python3 (python3-dbus),
+    # NICHT das venv.
+    python3 tools/bt-pair.py "$TARGET" >> "$LOG" 2>&1
     kill $INQPID 2>/dev/null
     if bonded; then
         log "  BOND_OK -- Kamera gekoppelt, Automat geht in Ruhe"
