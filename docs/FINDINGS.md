@@ -25,8 +25,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **AP-Start.** `0x01` auf `0x2005` startet den Access Point nicht allein (23.08. gemessen). Was die App danach noch tut, ist offen |
-| **Nächster Schritt** | `ble-proxy.py` zwischen App und Kamera hängen und die App die Fernaufnahme starten lassen — der Mitschnitt zeigt den fehlenden Schritt |
+| **Offenes Gate** | **AP-Start.** `0x01` auf `0x2005` startet den Access Point nicht allein (23.08. gemessen). Die App-Analyse (23.08., drei Durchläufe) zeigt: **nach `0x2005` sendet die App nichts mehr** — der fehlende Schritt ist eine **Vorbedingung davor** (in einer Sitzung: Auth, dann `0x2008` ConnectionRequest→OFF falls ON, `0x2001`-Gate lesen), kein Folge-Byte |
+| **Nächster Schritt** | `ble-probe.py pairing --register skyshutter --establish 01 --hold 60` — spielt jetzt die volle Hersteller-Vorbedingungskette und meldet `0x2008`/`0x2001`-Zustand; zeigt, ob `conn` überhaupt ON war und ob der AP dann erscheint |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,34 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — App-Analyse: nach `0x2005` kommt nichts mehr — der fehlende Schritt liegt davor
+Art:        **Analyse, keine Hardware-Messung.** Quelle: dekompilierte
+            Hersteller-App (baksmali, 11.721 Dateien), drei unabhängige Durchläufe.
+Frage:      Was tut die App, um den AP zu starten, das unserem `0x01`→`0x2005`
+            fehlt?
+Ergebnis:   Der WLAN-Start der App ist `CameraConnectByWiFiUseCase` → `M0.e()`,
+            und der schreibt **byte-für-byte unser `0x01`** auf `0x2005`. Es gibt
+            **kein verstecktes „AP starten"-Kommando** und **nach `0x2005` keinen
+            weiteren BLE-Zugriff** — die App scannt danach nur noch das WLAN
+            (Android-seitig) und wartet auf keine „AP steht"-Notification.
+            Der Unterschied liegt in der **Vorbedingungskette in derselben
+            authentifizierten Sitzung**, in dieser Reihenfolge:
+            ```
+            0x2000  Auth-Handshake (bei connect)
+            0x2008  ConnectionRequest -> OFF  (M0.a(), read-modify-write,
+                    nur falls gerade ON; Zeit/Standort-Nibble bleiben)
+            0x2001  POWER_CONTROL lesen (Gate; INVALID_WAKE = keine Fernaufnahme)
+            0x2004  Config lesen (SSID/PW)
+            0x2005  <- 01
+            ```
+            Wire-Werte `0x2008`-ConnectionRequest: OFF=0, ON=1 (aus der Enum
+            verifiziert; Agent-Erstlesung „OFF=1/ON=2" war der Ordinal, nicht der
+            Wire-Wert). Vorbehalt: der ungekoppelte `0x2008`-Lesewert stand schon
+            auf OFF — ob **unsere** Sitzung die Kamera je in ON bringt, ist offen.
+Folge:      `ble-probe.py --establish` spielt jetzt die volle Kette und meldet
+            `0x2008`/`0x2001`-Zustand; neues Flag `--no-connreq-reset` für den
+            A/B-Test. Nächster Hardware-Lauf misst, ob der AP damit erscheint.
 
 ### 23.08.2026 — WLAN-Auslöser an der Hardware: `0x01` auf `0x2005` startet den AP nicht
 Kommando:   `ble-probe.py pairing --device … --nonce … --establish 01`, als

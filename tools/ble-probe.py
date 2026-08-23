@@ -301,11 +301,18 @@ async def cmd_pair(args) -> None:
 
 
 AUTH_UUID = "00002000-3dd4-4255-8d62-6dc7b9bd5561"
+POWER_UUID = "00002001-3dd4-4255-8d62-6dc7b9bd5561"
 NAME_UUID = "00002002-3dd4-4255-8d62-6dc7b9bd5561"
 ESTABLISH_UUID = "00002005-3dd4-4255-8d62-6dc7b9bd5561"
 TIME_UUID = "00002006-3dd4-4255-8d62-6dc7b9bd5561"
+CONTROL_POINT_UUID = "00002008-3dd4-4255-8d62-6dc7b9bd5561"
 FEATURE_UUID = "00002009-3dd4-4255-8d62-6dc7b9bd5561"
 SERVER_NAME_UUID = "00002003-3dd4-4255-8d62-6dc7b9bd5561"
+
+# 0x2001 POWER_CONTROL is a one-byte enum. INVALID_WAKE means the camera will
+# not accept remote shooting; the vendor app reads it as a gate before WiFi.
+POWER_TYPES = {0xFF: "UNDEFINED", 0x01: "STOP", 0x02: "WAKE_WAIT",
+               0x03: "INVALID_WAKE", 0x04: "VALID_WAKE"}
 
 
 def auth_message(stage: int, stamp: bytes, device_id: bytes, nonce: bytes) -> bytes:
@@ -491,6 +498,44 @@ async def _pairing_once(args) -> None:
         if args.establish:
             payload = bytes.fromhex(args.establish)
 
+            # Reconstructed from the vendor app (CameraConnectByWiFiUseCase):
+            # before it writes 0x2005 it clears the LSS control point's
+            # ConnectionRequest to OFF and reads the power-control gate, all in
+            # the same authenticated session. A lone 0x2005 write skips both --
+            # which is the most likely reason ours produced no access point.
+            if not args.no_connreq_reset:
+                # Faithful replay of the vendor app's M0.a(): 0x2008 is a
+                # little-endian short of nibble fields -- bits0-3 TimeRequest,
+                # 4-7 LocationRequest, 8-11 ConnectionRequest (OFF=0, ON=1). The
+                # app reads it and, *only if* ConnectionRequest is ON, clears that
+                # one nibble to OFF and writes it back, leaving Time and Location
+                # untouched. If it is already off, the app writes nothing.
+                try:
+                    cp_before = bytes(await client.read_gatt_char(CONTROL_POINT_UUID))
+                    short = int.from_bytes(cp_before[:2], "little") if len(cp_before) >= 2 else 0
+                    conn = (short >> 8) & 0xF
+                    print(f"\n  0x2008 before  {hexdump(cp_before)}  (ConnectionRequest={conn})")
+                    if conn == 1:  # ON -> clear just that nibble, keep the rest
+                        new = short & 0x00FF
+                        await client.write_gatt_char(
+                            CONTROL_POINT_UUID, new.to_bytes(2, "little"), response=True
+                        )
+                        after = bytes(await client.read_gatt_char(CONTROL_POINT_UUID))
+                        print(f"  0x2008 write   {new.to_bytes(2, 'little').hex()}"
+                              f"  (ConnectionRequest -> OFF); now {hexdump(after)}")
+                    else:
+                        print("  0x2008 already not ON -- app writes nothing here, skipping")
+                except Exception as exc:
+                    print(f"\n  0x2008 not accessible: {type(exc).__name__}: {str(exc)[:70]}")
+
+            try:
+                power = bytes(await client.read_gatt_char(POWER_UUID))
+                name = POWER_TYPES.get(power[0] if power else 0xFF, "?")
+                warn = "  <-- remote shooting UNAVAILABLE" if name == "INVALID_WAKE" else ""
+                print(f"  0x2001 power   {hexdump(power)}  {name}{warn}")
+            except Exception as exc:
+                print(f"  0x2001 not readable: {type(exc).__name__}: {str(exc)[:70]}")
+
             # The vendor app reads the connection configuration first and only
             # then writes the establishment byte -- it checks there whether the
             # camera has WiFi settings at all. Whether that read is a
@@ -666,6 +711,11 @@ def main() -> None:
     )
     pairing.add_argument(
         "--sweep", action="store_true", help="try each plausible value on 0x2005"
+    )
+    pairing.add_argument(
+        "--no-connreq-reset",
+        action="store_true",
+        help="skip the 0x2008 ConnectionRequest->OFF write before --establish (A/B test)",
     )
     pairing.add_argument(
         "--quick", action="store_true", help="skip the value dump; leaves time for bonding"

@@ -77,12 +77,19 @@ python ble-probe.py session --seconds 0     # alle lesbaren Werte
 ### 3. Das WLAN starten
 
 ```bash
-python ble-probe.py pairing --quick --device DDDDDDDD --nonce NNNNNNNN --establish 01
+python ble-probe.py pairing --register skyshutter --establish 01 --hold 60
 ```
 
-`--establish 01` schreibt das Byte auf `0x2005`, das laut Herstellercode den
-Access Point öffnet. **Wirkung an der Hardware noch nicht bestätigt** — das ist
-das offene Gate des Projekts.
+`--establish 01` spielt jetzt die **volle Vorbedingungskette der Hersteller-App**
+in einer authentifizierten Sitzung, in ihrer Reihenfolge: `0x2008`
+ConnectionRequest → OFF (nur falls ON), `0x2001` Power-Gate lesen, `0x2004` Config
+lesen, dann `0x01` auf `0x2005`. Jeder Zustand wird ausgegeben. `--hold 60` hält
+die Verbindung, damit `netsh wlan show networks` das `P1100`-Netz sehen könnte.
+
+**Wirkung an der Hardware noch nicht bestätigt** — das ist das offene Gate. Die
+App-Analyse (docs/referenz.md, `0x2005`) zeigt: nach `0x2005` sendet die App
+nichts mehr, der fehlende Schritt liegt in dieser Kette davor. `--no-connreq-reset`
+lässt den `0x2008`-Write weg — für den A/B-Test, ob genau er den Unterschied macht.
 
 ### 3b. Die WLAN-Zugangsdaten mitschreiben und entschlüsseln
 
