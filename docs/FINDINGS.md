@@ -23,15 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
+| **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. WLAN-Beitritt: Architektur-Wechsel auf Raspberry als Funk-Zentrale |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Erreicht (neu)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die **Kamera öffnet ihren WLAN-AP** (am Display + als `netsh`-SSID bestätigt). Kein RFCOMM, kein `0x2021` |
-| **Offenes Gate** | **Beitritt + Live View.** Der AP ist ein normaler broadcastender WPA2-AP, aber (a) die Hochfahrt ist zwischen Läufen inkonsistent (mal stabil scanbar, mal nie), (b) `remote-start --join` muss zuverlässig auf dem freien Adapter beitreten, (c) danach PTP/IP `host:15740` Live View `0x9201`/`0x9428` |
-| **Nächster Schritt** | **Letzte Meile ist reine Timing-Flakiness, kein offenes Wissen.** Rezept steht (Messung „Mango-Join fast fertig"): `remote-start --join` (hält AP wach) → frische Creds aus `%TEMP%/skyshutter_creds.txt` → `ubus repeater connect` (frisches PW!) → Portweiterleitung `15740→Kamera` → `liveview.py --host 192.168.1.143`. Nötig ist nur eine saubere BLE-Session (Stack trennt ~1/3), die der Mango im AP-Fenster greift |
-| **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
+| **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
+| **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert (BlueZ-Bond via bluetoothctl, nmcli-Join auf wlan0) und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang: WAN→Heimnetz (192.168.1.143), LAN→Raspberry (192.168.3.178 per DHCP), Port-Forward 2222→Raspberry:22; alter camjoin/procd-Watcher entfernt, repeater-uci P1100-Eintrag gelöscht, defekter GL-VPN-Firewall-Include deaktiviert (fw4-Reset lädt jetzt sauber). |
+| **Offenes Gate** | **Erster Hardware-Lauf der neuen Architektur.** (a) Classic-Bond einmalig am Raspberry anlegen (`bluetoothctl pair 7C:B8:DA:A6:4F:FE`, Kamera in Kopplungsbereitschaft); (b) `remote-start --join` auf dem Raspberry: BLE→AP→nmcli-Join auf wlan0; (c) `liveview.py --host 192.168.0.10` auf dem Raspberry. **Ungeklärt aus der Mango-Runde:** der Kamera-AP-Join schlug am Mango wiederholt mit „connect fail" nach ~27 s durch (BSS gefunden, ch 6, exzellentes Signal, Key 2× verifiziert entschlüsselt) — Verdacht TKIP/AES-Mix oder AP-Client-Filter. Der nmcli/wpa_supplicant-Stack des Raspberry ist der saubere Testplatz: schlägt er auch dort fehl, liegt es an Kamera/Key, nicht am Client. |
+| **Nächster Schritt** | Kommandoblock „erster Hardware-Lauf" (unten, Messung 23.08. Feld-Rig) ausführen, sobald die Kamera griffbereit ist. Danach: AZ-GTi anbinden (FTDI bevorzugt; WLAN-Fallback über Mango-Repeater braucht SSID+PSK vom Mount — Thomas muss die vom AZ-GTi-Display ablesen, stehen nirgends dokumentiert). |
+| **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-23 |
+| **Stand vom** | 2026-08-23 (Abend) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -98,6 +99,51 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 (Abend) — Architektur-Wechsel: Raspberry wird Funk-Zentrale; Mango-Join scheitert an der Kamera, nicht am Timing
+Art:        Infrastruktur-Umbau + Systemmessungen; Kamera nur indirekt (AP-Fenster
+            aus vorheriger Runde).
+Aufbau:     reComputer AI R2140-12 (Raspberry-Pi-CM5-Basis, Debian 12 Bookworm,
+            4 Kerne/16 GB, Hailo-NPU, WLAN `wlan0` + BLE `hci0` an Bord) hängt am
+            Mango-LAN (DHCP 192.168.3.178); Mango-WAN im Heimnetz (192.168.1.143).
+            Zugang WSL→Mango:2222→Raspberry:22 (DNAT+SNAT, uci-Persistenz).
+Gemessen:   - **Der Kamera-AP-Join schlägt am Mango reproduzierbar fehl — NICHT
+              am Timing.** Daemon-Log: `prepare connect 'P1100(7c:b8:da:a6:b7:9b)',
+              WPA2PSK/TKIPAES channel 6` → 27 s Versuch → `connect fail`. BSS
+              gefunden, Signal −45, Key frisch entschlüsselt (<AP-PSK>, 2× über
+              verschiedene Sessions stabil). Auch Windows joinete mit demselben
+              Key nie erfolgreich. Verdacht: TKIP/AES-Cipher-Mix oder
+              AP-seitiger Client-Filter. → Auf wpa_supplicant/nmcli am Raspberry
+              verlagert; schlägt es dort auch fehl, ist es Kamera/Key, nicht der
+              Client-Stack.
+            - **`iwinfo ra0 scan` segfaultet** auf dem Mango (MTK-Treiber);
+              `iwpriv ra0 set SiteSurvey=1` + `get_site_survey` funktioniert und
+              sieht auch den hidden Kamera-AP (Windows-netsh sieht ihn nie ohne
+              Profil — der AP beacont nur als Antwort auf gerichtete Probes).
+            - **`ubus repeater connect` mit `remember:true` setzt
+              `repeater.@main[0].disabled=0`** (Autostart scharf) und schreibt
+              SSID/Key in uci — Finger weg von remember:true, wenn der Boot
+              sauber bleiben soll. Zurückgesetzt auf disabled=1, P1100-Eintrag
+              gelöscht.
+            - **GL-Firewall-Dienst war defekt** (`/etc/firewall.vpn_server_policy.sh`,
+              fw3-Rest von 2023, bricht unter fw4 bei toter Kette `VPN_SER_POLICY`
+              ab → uci-Regeln wurden NIE geladen). Include deaktiviert; danach
+              lädt `firewall restart` sauber und der DNAT-Zugang ist
+              reboot-fest (uci `rec-ssh` Redirect).
+            - **Hintergrund-Prozesse auf dem Mango überleben SSH-Session-Ende
+              NICHT** (dropbear räumt die Prozessgruppe ab; nohup reicht nicht).
+              Zuverlässig: eigener procd-Service (`/etc/init.d/*`). Für die
+              neue Architektur irrelevant (kein Watcher mehr nötig).
+            - Raspberry: bleak 3.0.2 + BlueZ arbeiten (7 Geräte im 8-s-Scan);
+              `remote-start.py` läuft unter Linux (`--help` ok). Login-Trail:
+              alter Pi aus astro-cv-tracker war `thomas`/`thomas`
+              (docs/README.md:73) — derselbe Benutzer auf dem R2140.
+Folge:      `remote-start.py` plattformneutral (Windows-Zweige erhalten),
+            Commits c323f39. Rig-Zugang: zuhause `ssh recomputer`
+            (192.168.1.143:2222), im Feld `ssh recomputer-field`
+            (192.168.3.178 direkt, Laptop im Mango-AP). AZ-GTi: FTDI bevorzugt;
+              WLAN-Fallback braucht SSID+PSK vom Mount-Display (nirgends
+              dokumentiert) → bei Thomas abfragen.
 
 ### 23.08.2026 — Mango-Join fast fertig: AP sichtbar (ch6/WPA2), Passwort rotiert, letzte Meile = Timing
 Aufbau:     `remote-start.py` (BLE→AP) + GL.iNet Mango als WISP-Client über GLs
