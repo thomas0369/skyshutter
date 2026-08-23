@@ -98,6 +98,35 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 23.08.2026 — Wecker-Kandidat `0x2021` RemoteControl: Bytes bekannt, an der Hardware blockiert
+Art:        Analyse + Hardware-Versuch (mehrere Läufe, Windows-Python).
+Fund (Code): Der Wecker ist `V0.startRemoteControl` → schreibt auf
+            **`0x2021` LSS_CONTROL_POINT_FOR_CONTROL** den Frame
+            `05 00 11 00 01` (LE: len=5, Opcode 0x11, Reserve 0, Mode
+            REMOTE_CONTROL=1; Serializer `J$a`). Direkt danach liest die App
+            `0x2001` und erwartet `VALID_WAKE` („wake up and function effective").
+            PowerControl selbst wird nie geschrieben — dies ist der Wake-Trigger.
+Hardware:   Nicht bestätigt — zwei Wände:
+            1. **`0x2021` ist ohne authentifizierte Sitzung nicht im GATT-Baum**
+               („Characteristic … was not found"). Ein handshake-freier Connect
+               ist zwar stabil (hielt 40 s), zeigt aber nur `0x2001` (= 03
+               INVALID_WAKE), nicht `0x2021`.
+            2. **Der Handshake bricht auf diesem Rig reproduzierbar bei Stufe 1
+               ab** (`WinError -2147023673`, „vom Benutzer abgebrochen" = Kamera/
+               Stack trennt), während eine *idle* Verbindung stabil bleibt. Es
+               sind die schnellen Auth-Writes, die die Trennung auslösen.
+            Nebenbefund: Bei jedem frischen Connect liest `0x2000` sofort einen
+            **Stufe-4-Wert** (`0400…200102…`) zurück — die Kamera hält uns über
+            Verbindungen hinweg für authentifiziert. Trotzdem erscheint `0x2021`
+            nicht; wahrscheinlich braucht die Characteristic einen **LE-
+            verschlüsselten** Link (bleak `client.pair()`), nicht nur den
+            App-Handshake/Classic-Bond.
+Nächster    Kandidaten, in Reihenfolge: (a) `client.pair()` vor der Discovery
+Test:       erzwingen — LE-Verschlüsselung könnte `0x2021` sichtbar machen;
+            (b) Handshake mit Pausen zwischen den Stufen (gegen den Abbruch);
+            (c) prüfen, ob SnapBridge selbst an dieser Kamera WLAN-Live-View
+            schafft (Ground Truth). Werkzeug `--wake` ist fertig und committet.
+
 ### 23.08.2026 — Wake-Flags stehen im Advertisement — verbindungsfrei lesbar, aktuell alle 0
 Kommando:   `ble-probe.py adwake` (Scan, kein Connect), Kamera im
             Verbindungsmenü, „Bluetooth blinkt, kein WLAN-Zeichen" (Thomas).
