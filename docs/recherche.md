@@ -275,15 +275,30 @@ Daraus die drei API-Funktionen mit dem höchsten Astro-Nutzen:
 
 1. **Fernauslösung mit Verzögerung** — löst das Verwacklungsproblem besser als
    Selbstauslöser oder Kabel.
-2. **Live View plus Fokus per Kommando** (`MfDrive`, 0x9204) — umgeht die
-   Fokus-by-wire-Hysterese, ohne die Kamera zu berühren. Das ist die eigentliche
-   Rechtfertigung des ganzen Projekts.
+2. ~~**Live View plus Fokus per Kommando** (`MfDrive`, 0x9204) — umgeht die
+   Fokus-by-wire-Hysterese. Das ist die eigentliche Rechtfertigung des ganzen
+   Projekts.~~
+   **Widerlegt am 23.08.2026.** `0x9204` steht **nicht** in der gemessenen
+   Operationsliste dieser Kamera, und die Hersteller-App kennt den Opcode für
+   kein einziges Modell — Volltextsuche über die gesamte App, null Treffer.
+   Manueller Fokus per Kommando ist über PTP nicht möglich.
+   **Was bleibt:** Live View plus Autofokus (`0x90C1`) und Setzen des
+   Messfeldes (`0x9205`). Für helle, kontrastreiche Ziele wie den Mond
+   tragfähig; für schwache Objekte ein echter Verlust.
 3. **Intervallserie mit Parametervariation und direktem Download** — Grundlage für
-   Belichtungsreihen ohne Kartenwechsel.
+   Belichtungsreihen ohne Kartenwechsel. Der Bildabruf ist geklärt
+   (`GetPartialObject` in 1-MiB-Blöcken, fortsetzbar); einen Intervallometer im
+   PTP-Layer gibt es **nicht**, die Serie muss der Client selbst fahren.
 
 Punkt 2 und 3 setzen voraus, dass die Kamera über WLAN mehr zulässt als SnapBridge
-anbietet. Trifft die Beschränkung auch auf dem Draht zu, bleibt Punkt 1 — und dafür
-genügt der ML-L7-Weg über furble.
+anbietet.
+
+~~Trifft die Beschränkung auch auf dem Draht zu, bleibt Punkt 1 — und dafür
+genügt der ML-L7-Weg über furble.~~ **Auch das ist widerlegt:** Die Kamera
+meldet über ihre Feature-Bits (`0x2009`, Bit 11), dass sie Kamerasteuerung über
+Bluetooth **nicht** anbietet, und die dafür nötigen Characteristics fehlen ihr.
+Der Fernauslöser über BLE ist an diesem Modell keine Rückfallebene — es gibt
+keine. Details in [referenz.md](referenz.md).
 
 ---
 

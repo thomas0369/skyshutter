@@ -4,8 +4,14 @@ Eine Nikon-Kamera über ihre eigenen Schnittstellen steuern — Livebild, Auslö
 Zoom, Protokollwerkzeug. Zielgerät ist eine Coolpix-Superzoom; der Client
 spricht generisches PTP/IP und PTP über USB.
 
-Der Zweck ist Astrofotografie: 3000 mm Brennweite, ferngesteuert, ohne die
-Hersteller-App.
+**Der Anlass:** Diese Kamera reicht bis **3000 mm** kleinbildäquivalent — genug,
+dass der Vollmond drei Viertel der Bildbreite füllt und Jupiters Wolkenbänder
+erkennbar werden, ohne dass ein Teleskop aufgebaut wird. Bei dieser Vergrößerung
+verwackelt allerdings jede Berührung das Bild, und der einzige Weg zur
+Fernsteuerung führt bisher über die Hersteller-App auf dem Telefon.
+
+Ausführlich, mit den Rechnungen dahinter und zwei korrigierten Irrtümern:
+**[docs/einfuehrung.md](docs/einfuehrung.md)**.
 
 **Python, ausschließlich Standardbibliothek.** Optionale Zusätze nur für
 Werkzeuge, nicht für den Client.
@@ -165,17 +171,20 @@ echte Kamera, samt ihrer Eigenheiten.
 
 **Wer das Projekt übernimmt, liest in dieser Reihenfolge:**
 
-1. [referenz.md](docs/referenz.md) — was die Kamera kann. Jeder Abschnitt sagt,
+1. [einfuehrung.md](docs/einfuehrung.md) — worum es geht: welche Kamera, warum
+   sie für Astrofotografie taugt, und was die App daran hindert.
+2. [referenz.md](docs/referenz.md) — was die Kamera kann. Jeder Abschnitt sagt,
    ob er gemessen oder aus dem Herstellercode gelesen ist.
-2. [FINDINGS.md](docs/FINDINGS.md) — der Stand-Block ganz oben nennt das
+3. [FINDINGS.md](docs/FINDINGS.md) — der Stand-Block ganz oben nennt das
    aktuelle Gate und den nächsten Schritt.
-3. [tools/README.md](tools/README.md) — falls eine Kamera zur Hand ist. Die
+4. [tools/README.md](tools/README.md) — falls eine Kamera zur Hand ist. Die
    Bluetooth-Werkzeuge laufen nur unter Windows.
-4. [playbook.md](docs/playbook.md) — wie hier gearbeitet wird, und was man an
+5. [playbook.md](docs/playbook.md) — wie hier gearbeitet wird, und was man an
    echter Hardware **nicht** tut.
 
 | Datei | Inhalt |
 |---|---|
+| [einfuehrung.md](docs/einfuehrung.md) | **Worum es geht** — Kamera, Zweck, Problem, Stand |
 | [referenz.md](docs/referenz.md) | **Nachschlagewerk** — was die Kamera kann, mit Herkunftsangabe |
 | [FINDINGS.md](docs/FINDINGS.md) | Messprotokoll, chronologisch, mit „Widerlegtes" |
 | [tools/README.md](tools/README.md) | die Werkzeuge: Plattform, Reihenfolge, Sicherheitsregeln |
