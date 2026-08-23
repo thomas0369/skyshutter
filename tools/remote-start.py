@@ -19,8 +19,10 @@ Stages (each prints, stops on hard failure):
     python tools/remote-start.py --register skyshutter --hold 60
     python tools/remote-start.py --register skyshutter --join      # also join + live view
 
-Runs under the Windows Python (needs bleak + winrt). Reuses nikon_pairing and,
-from the installed package, lssec / ptpip / nikon.
+Runs under Windows Python (bleak + winrt) or under Linux (bleak + BlueZ).
+On Linux the classic bond is checked via bluetoothctl against the camera's
+static BR/EDR address, and --join uses NetworkManager (nmcli) on wlan0.
+Reuses nikon_pairing and, from the installed package, lssec / ptpip / nikon.
 """
 
 from __future__ import annotations
@@ -58,8 +60,13 @@ ESTABLISH = f"00002005{VENDOR}"
 CONTROL_POINT = f"00002008{VENDOR}"
 
 # Wire values (field a / getByte), verified from BlePowerControlData$Types.smali.
-POWER_TYPES = {0xFF: "UNDEFINED", 0x00: "STOP", 0x01: "WAKE_WAIT",
-               0x02: "INVALID_WAKE", 0x03: "VALID_WAKE"}
+POWER_TYPES = {
+    0xFF: "UNDEFINED",
+    0x00: "STOP",
+    0x01: "WAKE_WAIT",
+    0x02: "INVALID_WAKE",
+    0x03: "VALID_WAKE",
+}
 
 
 def log(msg: str) -> None:
@@ -70,8 +77,29 @@ def hexs(data: bytes) -> str:
     return data.hex() if data else "(leer)"
 
 
+# Static BR/EDR address of the camera (dual-mode device, separate from the LE
+# RPA). The classic bond to THIS address is the wake enabler; measured 23.08.
+CAMERA_CLASSIC_MAC = "7C:B8:DA:A6:4F:FE"
+
+IS_WINDOWS = sys.platform == "win32"
+
+
 async def ensure_bond(name_hint: str) -> None:
     """Stage 1: make sure a classic bond to the camera exists (the wake enabler)."""
+    if not IS_WINDOWS:
+        out = subprocess.run(
+            ["bluetoothctl", "info", CAMERA_CLASSIC_MAC], capture_output=True, text=True, timeout=10
+        ).stdout
+        if "Paired: yes" in out:
+            log(f"  classic bond vorhanden: {CAMERA_CLASSIC_MAC}")
+            return
+        log("  kein classic Bond -- einmalig ausfuehren (Kamera in Kopplungsbereitschaft):")
+        log(
+            f"    bluetoothctl: remove {CAMERA_CLASSIC_MAC}; pair {CAMERA_CLASSIC_MAC};"
+            f" trust {CAMERA_CLASSIC_MAC}"
+        )
+        log("  (fahre trotzdem fort; die Kamera ignoriert 0x2005 evtl. ohne Bond)")
+        return
     try:
         from winrt.windows.devices.bluetooth import BluetoothDevice
         from winrt.windows.devices.enumeration import DeviceInformation
@@ -92,17 +120,21 @@ async def ensure_bond(name_hint: str) -> None:
 async def find_camera(timeout: float):
     def match(_dev, adv):
         return any(u.lower() == SERVICE for u in (adv.service_uuids or []))
+
     return await BleakScanner.find_device_by_filter(match, timeout=timeout)
 
 
 async def handshake(client, args):
     """Stage 2/3: CCCDs + 4-stage LSS handshake + name. Returns (s1, s2, s4) bytes."""
+
     # CCCD subscriptions first, exactly as the app: bleak picks indicate for 0x2000
     # (indicate-only) and notify for 0x2008 from the characteristic properties.
     def on_ind(tag):
         def cb(_c, data):
             log(f"  NOTIFY/IND {tag}  {hexs(bytes(data))}")
+
         return cb
+
     for uuid, tag in ((CONTROL_POINT, "2008"), (AUTH, "2000")):
         try:
             await client.start_notify(uuid, on_ind(tag))
@@ -140,8 +172,9 @@ def scan_wifi_for(ssid: str) -> bool:
     netsh = r"C:\Windows\System32\netsh.exe"
     exe = netsh if os.path.exists("/mnt/c/Windows/System32/netsh.exe") else "netsh.exe"
     try:
-        out = subprocess.run([exe, "wlan", "show", "networks"], capture_output=True,
-                             text=True, timeout=20).stdout
+        out = subprocess.run(
+            [exe, "wlan", "show", "networks"], capture_output=True, text=True, timeout=20
+        ).stdout
     except Exception as exc:
         log(f"  netsh scan failed: {type(exc).__name__}: {str(exc)[:60]}")
         return False
@@ -164,8 +197,10 @@ async def run(args) -> int:
         log("Stage 3: power gate + credentials")
         power = bytes(await client.read_gatt_char(POWER))
         pname = POWER_TYPES.get(power[0] if power else 0xFF, "?")
-        log(f"  0x2001 power = {hexs(power)}  {pname}"
-            + ("  <-- ready" if pname == "VALID_WAKE" else "  <-- NOT ready"))
+        log(
+            f"  0x2001 power = {hexs(power)}  {pname}"
+            + ("  <-- ready" if pname == "VALID_WAKE" else "  <-- NOT ready")
+        )
         config = bytes(await client.read_gatt_char(CONFIG))
         log(f"  0x2004 config = {len(config)}B flags=0x{(config[0] if config else 0):02x}")
         creds = None
@@ -197,7 +232,7 @@ async def run(args) -> int:
             visible = scan_wifi_for(creds.ssid) if creds else False
             # The SSID is hidden, so do NOT wait to see it -- try the join every
             # cycle while the camera holds the AP up.
-            if creds and args.join and try_join(creds.ssid):
+            if creds and args.join and try_join(creds.ssid, creds.password):
                 joined = True
                 gw = wlan_gateway(creds.ssid)
                 log(f"  WLAN verbunden mit {creds.ssid!r}  Kamera-IP≈{gw or '?'}")
@@ -206,8 +241,10 @@ async def run(args) -> int:
             # drops the camera AP before an external client (e.g. the Mango
             # repeater) can join. Hold the whole duration to keep the AP up.
             elapsed = args.hold - (deadline - time.monotonic())
-            log(f"  +{elapsed:.0f}s: SSID {'im Scan' if visible else 'versteckt'}"
-                f"{'; Join-Versuch...' if args.join else '; halte AP (fuer Mango)'}")
+            log(
+                f"  +{elapsed:.0f}s: SSID {'im Scan' if visible else 'versteckt'}"
+                f"{'; Join-Versuch...' if args.join else '; halte AP (fuer Mango)'}"
+            )
             await asyncio.sleep(3.0)
         if not client.is_connected:
             log("  ! BLE getrennt (Kamera schaltet auf Funk um -- kann normal sein)")
@@ -240,6 +277,7 @@ def _netsh() -> str:
 
 def _creds_path() -> str:
     import tempfile
+
     return os.path.join(tempfile.gettempdir(), "skyshutter_creds.txt")
 
 
@@ -257,10 +295,44 @@ def _profile_path() -> str:
     """A temp path for the WLAN profile XML, valid for the Python that runs us
     (Windows Python -> a real C:\\...\\Temp path via tempfile)."""
     import tempfile
+
     return os.path.join(tempfile.gettempdir(), "skyshutter_ap.xml")
 
 
 def add_wifi_profile(ssid: str, psk: str) -> None:
+    if not IS_WINDOWS:
+        # NetworkManager: hidden-SSID profile with the fresh key (idempotent).
+        subprocess.run(
+            ["nmcli", "connection", "delete", "id", ssid],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        subprocess.run(
+            [
+                "nmcli",
+                "connection",
+                "add",
+                "type",
+                "wifi",
+                "ifname",
+                "wlan0",
+                "con-name",
+                ssid,
+                "ssid",
+                ssid,
+                "wifi.hidden",
+                "yes",
+                "802-11-wireless-security.key-mgmt",
+                "wpa-psk",
+                "802-11-wireless-security.psk",
+                psk,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return
     xml = (
         '<?xml version="1.0"?>\n'
         '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">\n'
@@ -278,29 +350,65 @@ def add_wifi_profile(ssid: str, psk: str) -> None:
     path = _profile_path()
     with open(path, "w") as fh:
         fh.write(xml)
-    subprocess.run([_netsh(), "wlan", "add", "profile", f"filename={path}"],
-                   capture_output=True, text=True, timeout=15)
+    subprocess.run(
+        [_netsh(), "wlan", "add", "profile", f"filename={path}"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
 
 
 def delete_wifi_profile(ssid: str) -> None:
-    subprocess.run([_netsh(), "wlan", "delete", "profile", f"name={ssid}"],
-                   capture_output=True, text=True, timeout=15)
+    if not IS_WINDOWS:
+        subprocess.run(
+            ["nmcli", "connection", "delete", "id", ssid],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return
+    subprocess.run(
+        [_netsh(), "wlan", "delete", "profile", f"name={ssid}"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
     try:
         os.remove(_profile_path())
     except OSError:
         pass
 
 
-def try_join(ssid: str) -> bool:
-    # Connect on the default adapter. The camera SSID is hidden (never in a scan),
-    # so a nonBroadcast profile + connect probes for it directly; joining on a
-    # named interface proved unreliable ("interface not present"). This may drop
-    # the host's own WiFi for the duration -- acceptable for a capture session.
-    subprocess.run([_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"],
-                   capture_output=True, text=True, timeout=15)
+def try_join(ssid: str, psk: str | None = None) -> bool:
+    # The camera SSID is hidden, so the stored profile (with hidden=yes) makes
+    # the adapter probe for it directly. On Linux this may drop the host's own
+    # WiFi uplink for the duration -- acceptable, the stream runs locally.
+    if not IS_WINDOWS:
+        subprocess.run(
+            ["nmcli", "connection", "up", "id", ssid, "ifname", "wlan0"],
+            capture_output=True,
+            text=True,
+            timeout=25,
+        )
+        time.sleep(3)
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "GENERAL.CONNECTION,GENERAL.STATE", "dev", "show", "wlan0"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout
+        connected = f"GENERAL.CONNECTION:{ssid}" in out
+        return connected
+    subprocess.run(
+        [_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
     time.sleep(3)
-    out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
-                         capture_output=True, text=True, timeout=15).stdout.lower()
+    out = subprocess.run(
+        [_netsh(), "wlan", "show", "interfaces"], capture_output=True, text=True, timeout=15
+    ).stdout.lower()
     return ssid.lower() in out and ("connected" in out or "verbunden" in out)
 
 
@@ -310,8 +418,20 @@ def _win_exe(name: str) -> str:
 
 
 def wlan_gateway(ssid: str) -> str | None:
-    out = subprocess.run([_win_exe("ipconfig.exe")],
-                         capture_output=True, text=True, timeout=15).stdout
+    if not IS_WINDOWS:
+        out = subprocess.run(
+            ["ip", "route", "show", "dev", "wlan0"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        ).stdout
+        for line in out.splitlines():
+            if line.startswith("default") and " via " in line:
+                return line.split(" via ")[1].split()[0]
+        return None
+    out = subprocess.run(
+        [_win_exe("ipconfig.exe")], capture_output=True, text=True, timeout=15
+    ).stdout
     gw = None
     for line in out.splitlines():
         if "gateway" in line.lower():
@@ -322,13 +442,25 @@ def wlan_gateway(ssid: str) -> str | None:
 
 
 def ping(host: str) -> bool:
-    r = subprocess.run([_win_exe("PING.EXE"), "-n", "2", "-w", "1500", host],
-                       capture_output=True, text=True, timeout=15)
+    if not IS_WINDOWS:
+        r = subprocess.run(
+            ["ping", "-c", "2", "-W", "2", host],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        return "ttl=" in r.stdout.lower()
+    r = subprocess.run(
+        [_win_exe("PING.EXE"), "-n", "2", "-w", "1500", host],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
     return "ttl=" in r.stdout.lower()
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     p.add_argument("--name", default="P1100", help="paired-device name substring for bond check")
     p.add_argument("--register", metavar="NAME", help="write this client name to 0x2002")
     p.add_argument("--timeout", type=float, default=25.0, help="BLE scan/connect timeout")
