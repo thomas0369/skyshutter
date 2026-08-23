@@ -25,10 +25,10 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — **PTP ist bestätigt**, Live View existiert. Phase 2: das Bild holen |
 | **Erreicht** | 38 Operationen und 20 Properties gemessen · Kopplung reproduzierbar in 40 s · zweiter Transport (USB) im Repo · Protokoll der Hersteller-App gelesen |
-| **Offenes Gate** | Startet `0x01` auf `0x2005` als **gekoppelter** Client den Access Point? Der Befehl steht fest, die Wirkung ist ungemessen |
-| **Fehlende Messung** | Ein Schreibversuch als gekoppelter Client, danach ein WLAN-Scan |
-| **Nächster Schritt** | Funk-Reset → Kameramenü → `ble-probe.py pairing --device … --nonce … --establish 01` → `netsh wlan show networks` |
-| **Danach** | `0x2004` als gekoppelter Client lesen — dann steht statt der Nullen das Chiffrat da, und die Entschlüsselung lässt sich gegen das angezeigte Passwort prüfen |
+| **Offenes Gate** | `0x01` auf `0x2005` **startet den AP nicht allein** (23.08. gemessen). Was fehlt noch zum AP-Start? |
+| **Fehlende Messung** | Rotiert das WLAN-Passwort? Davon hängt ab, ob wir die Entschlüsselung brauchen |
+| **Nächster Schritt** | Passwort-Rotation prüfen (SnapBridge AP starten, ablesen, Kamera aus/an, erneut, vergleichen) |
+| **Danach** | Wenn stabil: WLAN-Zugang mit abgelesenem Passwort. Wenn rotierend: LsSec-Orakel bauen (drei Wege in der Messung unten) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
 | **Stand vom** | 2026-08-23 |
 
@@ -83,23 +83,92 @@ oft mehr wert als die Frage.
       die Adresse steht im Lease. Voreinstellung `192.168.0.10`.
 - [x] **Kann man über Bluetooth auslösen?** Nein. Feature-Bit 11 ist null, und
       die dafür nötigen Characteristics fehlen.
-- [x] **Wie sind die WLAN-Zugangsdaten geschützt?** Blowfish-CBC. Der Schlüssel
-      entsteht aus Werten, die alle über BLE sichtbar oder frei wählbar sind —
-      der Nachbau ist möglich, aber noch nicht durchgeführt.
+- [x] **Wie sind die WLAN-Zugangsdaten geschützt?** Blowfish-CBC, Algorithmus
+      vollständig verstanden (Messung 23.08., unten). **Aber der Nachbau aus
+      geloggten Werten ist blockiert:** der Sitzungsschlüssel hängt von zwei
+      rein nativen Zwischenwerten ab (`fieldA`, Nutzdaten-IV), die nicht in den
+      BLE-Nachrichten stehen. Die frühere Annahme „aus BLE-Werten ableitbar"
+      ist damit widerlegt.
+- [ ] **Rotiert das WLAN-Passwort zwischen zwei Verbindungen?** Entscheidet, ob
+      die Entschlüsselung überhaupt gebraucht wird. Ungeprüft.
 
 ---
 
 ## Messungen
 
-Neueste zuerst. Vorlage für jeden Eintrag:
+Neueste zuerst.
 
-```
-### TT.MM.JJJJ — Kurztitel
-Kommando:   das wörtliche Kommando
-Aufbau:     Kameramodus, Netz, welches Interface
-Ergebnis:   was tatsächlich herauskam
-Folge:      welcher Code, welcher Test, welche Doku sich geändert hat
-```
+### 23.08.2026 — WLAN-Auslöser an der Hardware: `0x01` auf `0x2005` startet den AP nicht
+Kommando:   `ble-probe.py pairing --device … --nonce … --establish 01`, als
+            gekoppelter Client, zweimal — einmal auch mit vorherigem Lesen von
+            `0x2004` wie die Hersteller-App.
+Aufbau:     Kamera frisch gekoppelt (Bond `PAIRED` um 11:50), Kameramenü offen.
+Ergebnis:   ```
+            0x2004 config  102B  03 + Chiffrat + 03ef010000
+              flags 0x03: WLAN-Block ja, BT-Block ja
+              SSID-Feld     (32 B Chiffrat, nicht mehr null)
+              Passwort-Feld (64 B Chiffrat)
+            0x2005 before  03
+            0x2005 write   01   -> accepted
+            0x2005 after   03
+            ```
+            `netsh wlan show networks` danach: **kein `P1100`-Netz.** Zweimal
+            gemessen, mit und ohne vorheriges `0x2004`-Lesen, einmal mit 60 s
+            gehaltener BLE-Verbindung. Der Access Point erscheint nicht.
+
+            **`0x01` auf `0x2005` ist notwendig, aber nicht hinreichend.** Die
+            Erwartung aus dem Herstellercode ist an der Hardware widerlegt —
+            irgendein Schritt fehlt noch. Kandidaten, ungeprüft: die App hält
+            die Verbindung dauerhaft und tut noch etwas anderes; oder ein
+            weiterer Schreibzugriff (`0x2001` POWER_CONTROL, `0x2008`) gehört
+            dazu; oder der AP braucht eine STA-/AP-Moduswahl, die wir nicht
+            gesetzt haben.
+
+            **Wichtiger Nebengewinn:** Als *gekoppelter* Client liefert `0x2004`
+            das Chiffrat von SSID und Passwort — ungekoppelt (Messung 22.08.)
+            waren beide Felder null. Das belegt: Die Kamera gibt die
+            Zugangsdaten nur an berechtigte Clients heraus, und liefert damit
+            das Klartext-Chiffrat-Paar für die Krypto-Analyse (unten).
+Folge:      Widerlegt-Eintrag zu `0x2005` bleibt bestehen und wird präzisiert:
+            der Schreibzugriff wird angenommen, startet den AP aber nicht allein.
+            `ble-probe.py` bekam `--give-up` (Zeitlimit) und `--hold`.
+
+### 23.08.2026 — LsSec-Verschlüsselung vollständig analysiert, Nachbau blockiert
+Kommando:   Statische Analyse von `libLsSec-jni.so` (ARM64) mit capstone,
+            plus Abgleich gegen zwei Klartext-Chiffrat-Paare aus `0x2004`.
+Aufbau:     Kein Kamerazugriff nötig — Werkzeugbank.
+Ergebnis:   Der Algorithmus ist **vollständig verstanden und in Python
+            nachgebaut** (`/tmp/lssec`, nicht im Repo — arbeitet mit Chiffrat):
+
+            - **Blowfish**, Tabellen bitgenau die Standard-Pi-Init.
+            - **Feste Transform:** Blowfish mit Schlüssel `ffffaa5511223300`
+              (derselbe wie der Handshake — der eingebackene Schlüsselplan ab
+              `.rodata 0x2e28` ist bitgenau `key-schedule` dieses Schlüssels),
+              CBC, IV `L=0x04030201 R=0x08070605` (byteweise der
+              Handshake-Startzustand).
+            - **Sitzungsschlüssel** = letzter CBC-Block (CBC-MAC) über 24 Byte
+              `arg1 ‖ arg2 ‖ fieldA`, alle Wörter big-endian.
+            - `arg1` = Stufe-4-Nutzlast (die „interne Seriennummer").
+            - `arg2` = die beim Pairing gespeicherte Client-DeviceID (8 Byte),
+              genau das, was der Client in Stufe 1 sendet.
+            - **Nutzdaten:** Blowfish-CBC mit dem Sitzungsschlüssel, IV aus dem
+              Kontext, big-endian.
+
+            **Warum der Nachbau trotzdem nicht rechnet:** Zwei Werte —
+            `fieldA` (= `ctx[0:8]`) und der Nutzdaten-IV (= `ctx+0x10`) —
+            werden **rein nativ in `Stage1st`/`Stage3rd` berechnet** und stehen
+            nicht in den BLE-Nachrichten. Über 1.900 Kombinationen aus allen
+            geloggten Handshake-Werten (beide Endianness, beide Modi) treffen
+            das Klartext-Chiffrat-Paar nicht. Damit ist belegt: `fieldA` ist ein
+            tieferer nativer Zwischenwert, nicht aus dem Mitschnitt ableitbar.
+Folge:      Drei Wege zum vollen Nachbau bleiben, alle mit Aufwand:
+            (1) `libLsSec-jni.so` als Orakel ausführen — scheitert bisher an
+            bionic-Symbolversionierung (`version LIBC`) auf glibc;
+            (2) `Stage3rd`/`GenerateKey` vollständig disassemblieren;
+            (3) den persistierten `LssContextData` (Feld `d`=40 B mit IV,
+            `e`+`f` = expandierter Blowfish-Schlüssel) zur Laufzeit dumpen.
+            **Vorher zu klären:** ob das Passwort überhaupt rotiert — sonst ist
+            der ganze Weg für den Betrieb unnötig.
 
 ### 23.08.2026 — Deep Dive in die Hersteller-App: Opcodes, Events, Zoom, Verschlüsselung
 Quelle:     Dieselbe dekompilierte App wie unten, acht Agenten auf getrennten
@@ -941,4 +1010,5 @@ Was wir ausgeschlossen haben — damit es niemand erneut versucht.
 | Datum | Annahme | Womit widerlegt |
 |---|---|---|
 | 22.08.2026 | Der HCI-Snoop-Schalter in den Entwickleroptionen liefert auf diesem Handy einen brauchbaren Mitschnitt | Aufzeichnung war aktiv (`dumpsys bluetooth_manager` → `sSnoopLogSettingAtEnable = FULL`), der Bugreport enthält 310 btsnoop-Dateien unter `FS/data/misc/bluetooth/logs/bthci/CsLog_*/BT_HCI_*.cfa` — **alle exakt 16 Byte, also nur Header ohne ein einziges Paket.** Der Hersteller filtert über `INIT_gd_hal_snoop_logger_filtering=true`. Beide Wege, das abzuschalten, sind ohne Root gesperrt: `device_config put` scheitert mit `SecurityException: must add flag to the allowlist`, `setprop persist.bluetooth.btsnoopenable` mit `Failed to set property`. |
-| 22.08.2026 | ~~`01` auf `0x2005` startet den Access Point~~ **Diese Widerlegung war selbst falsch — am 23.08. zurückgenommen.** | Beobachtung damals: nach der Authentifizierung geschrieben, Kamera meldet Erfolg, Wert bleibt `03`, kein AP. **Fehler war die Deutung von `03`:** Das ist kein Ruhewert, sondern derselbe Bitfeld-Wert beim *Lesen* — Bit0 und Bit1 gesetzt heißt „WLAN und Bluetooth aktiv". Wir haben eine Statusmeldung für einen unveränderten Befehlswert gehalten. Der Herstellercode zeigt: `0x01` **ist** der WLAN-Auslöser. Warum es damals wirkungslos blieb, ist offen; wahrscheinlichster Grund ist, dass zu diesem Zeitpunkt noch keine Kopplung bestand — zur selben Zeit lieferte `0x2004` leere Zugangsdaten. |
+| 23.08.2026 | `0x01` auf `0x2005` startet den AP **allein** | Als vollständig gekoppelter Client zweimal geschrieben (einmal mit vorherigem `0x2004`-Lesen wie die App, einmal mit 60 s gehaltener Verbindung). Schreibzugriff jedes Mal `accepted`, aber kein `P1100`-Netz im `netsh`-Scan. `0x01` ist notwendig (steht so im Herstellercode), aber nicht hinreichend — es fehlt ein weiterer Schritt. Details in der Messung vom 23.08. |
+| 22.08.2026 | ~~`01` auf `0x2005` bewirkt gar nichts~~ **Teil-Widerlegung, am 23.08. präzisiert.** | Damals gedeutet als „bewirkt nichts, Wert bleibt `03`". Richtig ist: `03` ist der Bitfeld-Lesewert („WLAN+BT aktiv"), keine Statusmeldung über Wirkungslosigkeit. Der Schreibzugriff wird angenommen. Dass damals nichts geschah, lag auch an fehlender Kopplung (`0x2004` lieferte leere Daten). Aber: Auch **mit** Kopplung startet `0x01` den AP nicht allein (23.08.). |

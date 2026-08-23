@@ -66,12 +66,29 @@ async def find(args):
         # (resolvable private, rotates every scan) it does not change.
         return any(u.lower() == VENDOR_SERVICE for u in adv.service_uuids)
 
+    # A wall clock on top of the attempt count. Retries alone are a bad limit:
+    # 30 of them at six seconds each is three minutes of someone standing at a
+    # camera waiting for something that is not going to happen.
+    deadline = time.monotonic() + args.give_up
     for attempt in range(1, args.retries + 1):
+        if time.monotonic() > deadline:
+            print(f"  aufgegeben nach {args.give_up:.0f}s", file=sys.stderr, flush=True)
+            break
         device = await BleakScanner.find_device_by_filter(matches, timeout=args.timeout)
         if device is not None:
             return device
-        print(f"  scan {attempt}/{args.retries}: silent", file=sys.stderr, flush=True)
-    sys.exit("camera not advertising - open the smart-device menu on the camera")
+        left = max(0, deadline - time.monotonic())
+        print(f"  scan {attempt}/{args.retries}: still, noch {left:.0f}s",
+              file=sys.stderr, flush=True)
+    sys.exit(
+        "Kamera sendet nicht. Drei Ursachen, in dieser Reihenfolge pruefen:\n"
+        "  1. Das Kameramenue 'Mit Smartgeraet verbinden' ist zu.\n"
+        "  2. Die Kamera ist bereits verbunden -- steht ein Bluetooth-Symbol im\n"
+        "     Display, advertisiert sie nicht mehr und kein Scan findet sie.\n"
+        "     Abhilfe: Funk aus/an (bt_state.ps1), dann sendet sie wieder.\n"
+        "  3. Der Windows-Stack hat sich verschluckt: mtu=23 statt 515 in den\n"
+        "     Verbindungsversuchen oben. Auch dagegen hilft Funk aus/an."
+    )
 
 
 async def cmd_scan(args) -> None:
@@ -455,6 +472,27 @@ async def _pairing_once(args) -> None:
 
         if args.establish:
             payload = bytes.fromhex(args.establish)
+
+            # The vendor app reads the connection configuration first and only
+            # then writes the establishment byte -- it checks there whether the
+            # camera has WiFi settings at all. Whether that read is a
+            # precondition or just the app being tidy is exactly what we are
+            # testing, so do it in the same order.
+            config_uuid = f"00002004{VENDOR_SERVICE[8:]}"
+            try:
+                config = bytes(await client.read_gatt_char(config_uuid))
+                flags = config[0] if config else 0
+                print(f"\n  0x2004 config  {hexdump(config)}")
+                print(f"    flags 0x{flags:02x}: WLAN-Block {'ja' if flags & 1 else 'NEIN'}, "
+                      f"BT-Block {'ja' if flags & 2 else 'nein'}")
+                if len(config) >= 98:
+                    ssid, password = config[1:33], config[33:97]
+                    print(f"    SSID-Feld     {'leer' if not any(ssid) else ssid.hex()}")
+                    print(f"    Passwort-Feld {'leer' if not any(password) else password.hex()}")
+                    print(f"    Verschlüsselung 0x{config[97]:02x}")
+            except Exception as exc:
+                print(f"\n  0x2004 nicht lesbar: {type(exc).__name__}: {str(exc)[:70]}")
+
             before = bytes(await client.read_gatt_char(ESTABLISH_UUID))
             print(f"\n  0x2005 before  {hexdump(before)}")
             print(f"  0x2005 write   {hexdump(payload)}")
@@ -465,6 +503,21 @@ async def _pairing_once(args) -> None:
                 print(f"  -> refused: {type(exc).__name__}: {str(exc).splitlines()[0][:90]}")
             await asyncio.sleep(3.0)
             print(f"  0x2005 after   {hexdump(bytes(await client.read_gatt_char(ESTABLISH_UUID)))}")
+
+            # The vendor app stays connected after writing this. If the camera
+            # only keeps its access point up while a client is attached, a tool
+            # that disconnects straight away would never see it -- so offer to
+            # hold the link and watch what happens.
+            if args.hold:
+                print(f"\n  Verbindung wird {args.hold:.0f}s gehalten — jetzt WLAN scannen.")
+                elapsed = 0.0
+                while elapsed < args.hold and client.is_connected:
+                    await asyncio.sleep(5.0)
+                    elapsed += 5.0
+                    state = bytes(await client.read_gatt_char(ESTABLISH_UUID))
+                    print(f"  +{elapsed:3.0f}s  0x2005 = {state.hex()}", flush=True)
+                if not client.is_connected:
+                    print("  ! die Kamera hat die Verbindung getrennt")
 
         # Read everything again: authentication may unlock values that read as
         # zero before, and comparing the two states is the cheapest way to see
@@ -534,6 +587,13 @@ def main() -> None:
     parser.add_argument("--name", default=DEFAULT_NAME, help="advertised device name")
     parser.add_argument("--timeout", type=float, default=25.0)
     parser.add_argument("--retries", type=int, default=4, help="scan attempts before giving up")
+    parser.add_argument(
+        "--give-up",
+        type=float,
+        default=90.0,
+        metavar="SEKUNDEN",
+        help="Gesamtzeit fuer die Suche, unabhaengig von --retries (Vorgabe 90 s)",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="list advertising devices")
@@ -564,6 +624,13 @@ def main() -> None:
     pairing.add_argument("--seconds", type=float, default=0.0, help="listen afterwards")
     pairing.add_argument(
         "--establish", metavar="HEX", help="write this to 0x2005 after authenticating"
+    )
+    pairing.add_argument(
+        "--hold",
+        type=float,
+        default=0.0,
+        metavar="SEKUNDEN",
+        help="nach dem Schreiben so lange verbunden bleiben (fuer den WLAN-Test)"
     )
     pairing.add_argument(
         "--attempts", type=int, default=6, help="restarts of the whole handshake"
