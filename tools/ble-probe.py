@@ -91,6 +91,46 @@ async def find(args):
     )
 
 
+async def cmd_adwake(args) -> None:
+    """Watch the camera's advertisement for its wake/readiness flags.
+
+    The vendor scan parser (BleScanData) reads an "LSS ad info" byte from the
+    manufacturer data -- byte offset 6 -- and exposes three flags from it:
+    quickWakeUp (bit 0x8), autoTransfer (bit 0x2), btcCoopWait (bit 0x10). This
+    is all in the advertisement, so it needs no connection -- which matters
+    because the Windows stack connects reliably only right after a radio reset,
+    while scanning always works. The camera only advertises while *Connect to
+    smart device* is open on its screen. Prints a line whenever the bytes change.
+    """
+    def decode(payload: bytes) -> str:
+        if len(payload) <= 6:
+            return "(zu kurz fuer LSS-Ad-Info)"
+        b = payload[6]
+        return (f"byte6=0x{b:02x}  quickWake={(b >> 3) & 1} "
+                f"autoTransfer={(b >> 1) & 1} btcCoopWait={(b >> 4) & 1}")
+
+    seen: dict = {}
+    print(f"scanning {args.seconds:.0f}s -- Kamera muss im Verbindungsmenue stehen")
+
+    def callback(device, adv) -> None:
+        if not any(u.lower() == VENDOR_SERVICE for u in (adv.service_uuids or [])):
+            return
+        for cid, payload in (adv.manufacturer_data or {}).items():
+            key = (cid, bytes(payload))
+            if key in seen:
+                return
+            seen[key] = True
+            print(f"  company=0x{cid:04x} data={bytes(payload).hex()}", flush=True)
+            print(f"    {decode(bytes(payload))}", flush=True)
+
+    scanner = BleakScanner(detection_callback=callback)
+    await scanner.start()
+    await asyncio.sleep(args.seconds)
+    await scanner.stop()
+    if not seen:
+        print("  nichts gesehen -- advertisiert die Kamera? (Verbindungsmenue offen?)")
+
+
 async def cmd_power(args) -> None:
     """Poll POWER_CONTROL (0x2001) and report the wake state as it changes.
 
@@ -696,6 +736,10 @@ def main() -> None:
 
     sub.add_parser("dump", help="print the GATT tree").set_defaults(run=cmd_dump)
     sub.add_parser("read", help="read every readable characteristic").set_defaults(run=cmd_read)
+
+    adwake = sub.add_parser("adwake", help="watch wake flags from the advertisement (no connect)")
+    adwake.add_argument("--seconds", type=float, default=120.0, help="how long to scan")
+    adwake.set_defaults(run=cmd_adwake)
 
     power = sub.add_parser("power", help="poll 0x2001 wake state while you change the camera")
     power.add_argument("--seconds", type=float, default=120.0, help="how long to poll")
