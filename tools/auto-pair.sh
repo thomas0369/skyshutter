@@ -62,23 +62,37 @@ while true; do
 
     LASTTRY=$NOW
     log "Kamera frisch (rssi $RSSI), kein Bond -> Handshake"
+    # inquiry listener starts NOW and runs the whole session -- the camera
+    # opens its classic side only for a few seconds right after the LE
+    # handshake; a late inquiry misses the window (measured 24.08. 00:53)
+    rm -f /tmp/inquiry_hits.txt
+    ( bluetoothctl scan on 2>/dev/null | while read -r L; do
+        echo "$L" | grep -qiE "P1100|7C:B8:DA" && echo "$L" >> /tmp/inquiry_hits.txt
+      done ) &
+    INQPID=$!
     timeout 90 .venv/bin/python tools/remote-start.py --register skyshutter \
         --hold 0 --wait-for-ad --no-establish > "$RSLOG" 2>&1
     if ! grep -q "registered as" "$RSLOG"; then
         log "  kein auth/registry"
         FAILS=$((FAILS + 1))
+        kill $INQPID 2>/dev/null
         sleep 30
         continue
     fi
-    log "  registriert, LE getrennt; 3 s warten (Kamera oeffnet Classic-Seite)"
+    log "  registriert, LE getrennt; Classic-Fenster ist JETZT offen (Listener laeuft)"
     sleep 3
 
-    # live classic inquiry; the device cache also lists stale sightings
-    TARGET=$(find_camera_classic)
-    [ -z "$TARGET" ] && TARGET=$(timeout 22 bluetoothctl scan on 2>&1 | grep -m1 "$CAM" | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}')
+    TARGET=""
+    for i in $(seq 1 8); do
+        T=$(head -1 /tmp/inquiry_hits.txt 2>/dev/null | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}')
+        [ -n "$T" ] && { TARGET="$T"; break; }
+        sleep 1
+    done
+    [ -z "$TARGET" ] && TARGET=$(find_camera_classic)
     if [ -z "$TARGET" ]; then
-        log "  Kamera nicht live im Inquiry"
+        log "  Kamera nicht im Inquiry (Fenster verpasst?)"
         FAILS=$((FAILS + 1))
+        kill $INQPID 2>/dev/null
         continue
     fi
     log "  Inquiry-Treff: $TARGET"
@@ -86,6 +100,7 @@ while true; do
     log "  PAIR -> CODE AM KAMERA-DISPLAY JETZT BESTAETIGEN"
     bluetoothctl trust "$TARGET" >/dev/null 2>&1
     bluetoothctl --timeout 30 pair "$TARGET" >/dev/null 2>&1
+    kill $INQPID 2>/dev/null
     if bonded; then
         log "  BOND_OK -- Kamera gekoppelt, Automat geht in Ruhe"
         FAILS=0
