@@ -25,8 +25,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **Notification- + Verschlüsselungs-Ablauf fehlt.** Der btsnoop der funktionierenden SnapBridge-Sitzung zeigt: vor dem `0x2005`-Write abonniert die App **Notifications auf 2000 und 2008**, empfängt die Kamera-Notifications und **verschlüsselt den Link** (`SET_CONNECTION_ENCRYPTION`). Unser Client tat beides nie — daher bleibt die Kamera in `INVALID_WAKE`. Der `0x2021`-Wecker ist widerlegt (existiert an diesem Modell nicht) |
-| **Nächster Schritt** | In `ble-probe.py`: CCCD auf 2000 **und** 2008 setzen (Notify an) → Auth → auf Kamera-Notification warten → Link verschlüsseln (`client.pair()`) → `0x2005`. Die echte Sequenz ist mitgeschnitten (btsnoop), nur noch nachzubauen |
+| **Offenes Gate** | **Es fehlt die Bluetooth-CLASSIC-Verbindung (RFCOMM/SPP).** btsnoop + APK belegen: SnapBridge nutzt BLE **und** klassisches RFCOMM (PTP über SPP, `sppMaxDataLength` aus `0x2004`) **und** WLAN. Ohne die klassische Verbindung bleibt die Kamera `INVALID_WAKE` und ignoriert den `0x2005`-Write. Unser Client spricht nur BLE — das erklärt alle bisherigen Fehlschläge. `0x2021`-Wecker widerlegt |
+| **Nächster Schritt** | RFCOMM/SPP-**Client** bauen: nach BLE-Auth die klassische Verbindung zur Kamera öffnen (ausgehend, Kanal aus SDP/Mitschnitt), `0x2001` sollte dann `VALID_WAKE` melden → `0x2005` → AP. `rfcomm-listen.py` war die falsche Richtung |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,36 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — Der eigentliche fehlende Teil: eine Bluetooth-CLASSIC-Verbindung (RFCOMM), nicht nur BLE
+Quelle:     btsnoop der funktionierenden SnapBridge-Fernaufnahme + APK
+            (`CameraConnectByBtcUseCase`, `ptpclient/`).
+Fund:       SnapBridge nutzt **drei** Transporte, nicht einen:
+            - **BLE** (LSS/GATT) für Steuerung/Setup,
+            - **Bluetooth Classic / RFCOMM (SPP)** — im Mitschnitt belegt
+              (`BTA_JV`, `rfcomm send_app_scn`, BR/EDR-ACL, `SET_CONNECTION_
+              ENCRYPTION` auf klassischem Handle). `sppMaxDataLength` aus `0x2004`
+              konfiguriert genau diese SPP-Verbindung; `snapbridge/ptpclient/`
+              fährt **PTP über RFCOMM**.
+            - **WLAN** für Live View (hohe Bandbreite).
+            Beide Use Cases (`CameraConnectByBtcUseCase` J3, `CameraConnectByWiFi`
+            Z3) brechen bei `INVALID_WAKE` mit `NOT_READY_CAMERA` ab.
+Deutung:    **Unser gesamter WLAN-Start scheiterte, weil wir nur BLE sprechen.**
+            Die Kamera bleibt `INVALID_WAKE`, solange keine klassische
+            RFCOMM-Verbindung steht — und honoriert den `0x2005`-Write dann nicht
+            (er wird zwar angenommen, aber ignoriert). Der Ablauf von SnapBridge:
+            BLE verbinden+auth (mit Notifications) → **RFCOMM/Classic verbinden**
+            (Kamera wird `VALID_WAKE`) → `0x2005` → AP → Live View über WLAN.
+            Thomas' Beobachtung passt exakt: BLE bleibt verbunden (kein Timeout),
+            WLAN jederzeit startbar — weil die BT-Verbindungen (BLE **und**
+            Classic) dauerhaft stehen.
+Konsequenz: `rfcomm-listen.py` war die falsche Richtung (wir warteten auf die
+            Kamera). Richtig: **wir müssen uns zur RFCOMM/SPP-Verbindung der
+            Kamera verbinden** (ausgehend), wie SnapBridge. Das ist neue
+            Funktionalität neben dem BLE-Client.
+Nächster    RFCOMM-Client bauen: nach BLE-Auth die klassische SPP-Verbindung zur
+Test:       Kamera öffnen (Kanal/UUID aus dem Mitschnitt bzw. SDP), dann `0x2001`
+            erneut lesen — Erwartung: `VALID_WAKE`. Dann `0x2005` → AP.
 
 ### 23.08.2026 — Echte SnapBridge-Sequenz mitgeschnitten: der `0x2021`-Wecker entfällt, es fehlen Notifications + Verschlüsselung
 Kommando:   `adb bugreport` → `btsnoop`/Bluetooth-Stack-Log der **funktionierenden**
