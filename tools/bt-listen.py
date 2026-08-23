@@ -217,7 +217,7 @@ def wait_cmd_complete(sock: socket.socket, opcode: int, timeout: float = 3.0) ->
     while time.monotonic() < deadline:
         try:
             pkt = sock.recv(4096)
-        except (socket.timeout, OSError):
+        except (TimeoutError, OSError):
             break
         if not pkt or pkt[0] != HCI_EVENT_PKT:
             continue
