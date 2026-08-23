@@ -246,7 +246,7 @@ def add_wifi_profile(ssid: str, psk: str) -> None:
         '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">\n'
         f"  <name>{ssid}</name>\n"
         f"  <SSIDConfig><SSID><name>{ssid}</name></SSID>"
-        "<nonBroadcast>true</nonBroadcast></SSIDConfig>\n"
+        "<nonBroadcast>false</nonBroadcast></SSIDConfig>\n"
         "  <connectionType>ESS</connectionType><connectionMode>manual</connectionMode>\n"
         "  <MSM><security>\n"
         "    <authEncryption><authentication>WPA2PSK</authentication>"
@@ -271,9 +271,28 @@ def delete_wifi_profile(ssid: str) -> None:
         pass
 
 
+def _free_wlan_interface() -> str | None:
+    """Name of a WLAN interface not already connected elsewhere, so joining the
+    camera does not disturb the host's own network (this rig has two adapters)."""
+    out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
+                         capture_output=True, text=True, timeout=15).stdout
+    name = None
+    for line in out.splitlines():
+        s = line.strip()
+        if s.lower().startswith("name"):
+            name = s.split(":", 1)[-1].strip()
+        elif s.lower().startswith(("state", "zustand")) and name:
+            if any(w in s.lower() for w in ("disconnected", "getrennt")):
+                return name
+    return None
+
+
 def try_join(ssid: str) -> bool:
-    subprocess.run([_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"],
-                   capture_output=True, text=True, timeout=15)
+    cmd = [_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"]
+    iface = _free_wlan_interface()
+    if iface:
+        cmd.append(f"interface={iface}")
+    subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     time.sleep(3)
     out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
                          capture_output=True, text=True, timeout=15).stdout.lower()
