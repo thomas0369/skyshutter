@@ -59,6 +59,26 @@ trap 'rm -rf "$WORK"' EXIT
 
 banner() { echo; echo "################ $* ################"; echo; }
 
+banner "0a/2  ALTE KOPPLUNG PRUEFEN  ($(date +%H:%M:%S))"
+# Gemessen am 23.08.2026: Ein Bond, den nur Windows noch kennt, macht die Kamera
+# fuer den Inquiry unsichtbar -- der sucht ausschliesslich UNGEPAARTE Geraete.
+# Das Symptom ist ein stiller Suchlauf, die Ursache sieht voellig anders aus.
+# Zwanzig Minuten gekostet, bevor jemand nachgesehen hat.
+"$PY" -u classic-pair.py --seconds 12 status 2>&1 | tr -d '\r' | tee "$WORK/status.txt"
+
+if grep -q "STALE BOND" "$WORK/status.txt"; then
+  banner ">>> ALTE KOPPLUNG GEFUNDEN <<<"
+  echo "  Windows loest sie gleich selbst."
+  echo "  AN DER KAMERA aber ebenfalls loeschen:"
+  echo "    Netzwerkmenue -> Bluetooth -> Gekoppelte Geraete -> 'skyshutter' entfernen"
+  echo
+  echo "  Sonst behandelt die Kamera diesen Rechner als bekannt und oeffnet ihre"
+  echo "  klassische Seite gar nicht erst."
+  echo
+  read -r -p "  Enter druecken, wenn der Eintrag an der Kamera geloescht ist ... " _
+  "$PY" -u classic-pair.py --seconds 15 forget 2>&1 | tr -d '\r' | tail -2
+fi
+
 banner "0/2  BLUETOOTH-RESET  ($(date +%H:%M:%S))"
 # Ohne den scheiterten fuenf Anlaeufe in Folge: der Windows-Stack findet dann
 # gar nichts mehr, auch keine Geraete, die klar in Reichweite sind.

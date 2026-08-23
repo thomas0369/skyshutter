@@ -70,7 +70,7 @@ hinaus ist Warten darauf, dass jemand am Gerät steht.
 9 Sekunden. Die früher notierten 35 Sekunden funktionierten auch, sind aber
 kein Ziel — die Kamera verlässt den Kopplungsmodus von selbst.
 
-## Die sieben Fallen
+## Die acht Fallen
 
 **1. Der Beacon hängt am Menü.** Die Kamera advertised nur, solange *Mit
 Smartgerät verbinden* auf ihrem Display offen steht. „Nicht gefunden" heißt
@@ -94,6 +94,25 @@ sendet. Ein `DeviceWatcher` auf
 echten Inquiry. Er muss das ganze Zeitfenster durchlaufen; ihn bei
 `EnumerationCompleted` zu stoppen findet gar nichts, weil Windows das schon
 nach einer Sekunde meldet.
+
+**4b. Ein Bond, den nur Windows noch kennt, macht die Kamera unsichtbar.**
+Gemessen am 23.08.2026 und **die teuerste Falle mit dem harmlosesten Symptom.**
+Die Kamera war an ihrem Display nicht mehr gekoppelt, Windows führte sie aber
+weiter als gepaartes Gerät. Der Inquiry sucht ausschließlich **ungepaarte**
+Geräte — also fand er sie nicht, zweimal, über 105 Sekunden, während der
+BLE-Handshake jedes Mal sauber durchlief.
+
+Das Symptom (`no P1100* device`) sieht aus wie „Kamera nicht in Reichweite" oder
+„Menü zu" und hat mit beidem nichts zu tun.
+
+```bash
+"$PY" -u classic-pair.py status     # zeigt einen übrig gebliebenen Bond
+```
+
+`pair.sh` prüft das seit dem 23.08. als allerersten Schritt und löst die
+Windows-Seite selbst. **Die Kameraseite muss von Hand gelöscht werden** —
+steht dort noch ein Eintrag, behandelt die Kamera den Rechner als bekannt und
+öffnet ihre klassische Seite gar nicht erst.
 
 **5a. Die Kamera verweigert nach mehreren Kopplungen jedes Bonding.** Das war
 der teuerste Effekt des Tages. Nach etwa zehn Kopplungs- und Entkopplungszyklen
