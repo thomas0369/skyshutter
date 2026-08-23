@@ -84,6 +84,20 @@ python ble-probe.py pairing --quick --device DDDDDDDD --nonce NNNNNNNN --establi
 Access Point öffnet. **Wirkung an der Hardware noch nicht bestätigt** — das ist
 das offene Gate des Projekts.
 
+### 3b. Die WLAN-Zugangsdaten mitschreiben und entschlüsseln
+
+Beim Koppeln die Handshake-Werte und den `0x2004`-Blob sichern, dann
+entschlüsseln — das Passwort der Kamera wechselt, aber es lässt sich aus dem
+Mitschnitt zurückrechnen:
+
+```bash
+python ble-probe.py pairing --register skyshutter --pairing-json pairing.json
+skyshutter wifi pairing.json          # gibt SSID und Passwort aus
+```
+
+Der Krypto-Weg steckt in `src/skyshutter/lssec.py`, verifiziert gegen echte
+Hardware. Kein Gerätegeheimnis nötig.
+
 ### 4. Über USB messen, ohne WLAN
 
 ```bash

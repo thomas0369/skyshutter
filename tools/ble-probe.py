@@ -432,6 +432,24 @@ async def _pairing_once(args) -> None:
             await client.write_gatt_char(NAME_UUID, payload, response=True)
             print(f"  -> registered as {args.register!r}")
 
+        if args.pairing_json:
+            # Everything 'skyshutter wifi' needs to recover the credentials: the
+            # three handshake messages and the encrypted 0x2004 blob. Written
+            # here, at the one moment we hold an authenticated link.
+            import json as _json
+
+            config = bytes(await client.read_gatt_char(f"00002004{VENDOR_SERVICE[8:]}"))
+            doc = {
+                "stage1": stage1.encode().hex(),
+                "stage2": stage2.encode().hex(),
+                "stage4": stage4.encode().hex(),
+                "config": config.hex(),
+            }
+            with open(args.pairing_json, "w") as handle:
+                _json.dump(doc, handle, indent=2)
+            print(f"  -> pairing saved to {args.pairing_json}")
+            print(f"     decrypt with:  skyshutter wifi {args.pairing_json}")
+
         if args.mimic:
             # The order the vendor app uses, taken from the doppelganger's log:
             # write the client name, read the device name, set the clock, read
@@ -621,6 +639,11 @@ def main() -> None:
 
     pairing = sub.add_parser("pairing", help="run the full four-stage handshake")
     pairing.add_argument("--register", metavar="NAME", help="write this client name to 0x2002")
+    pairing.add_argument(
+        "--pairing-json",
+        metavar="PATH",
+        help="save the handshake and 0x2004 blob as JSON for 'skyshutter wifi'",
+    )
     pairing.add_argument("--seconds", type=float, default=0.0, help="listen afterwards")
     pairing.add_argument(
         "--establish", metavar="HEX", help="write this to 0x2005 after authenticating"

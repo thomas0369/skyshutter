@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import sys
 import time
 from pathlib import Path
 
-from . import btsnoop, config, discovery
+from . import btsnoop, config, discovery, lssec
 from .nikon import NikonCamera, NikonOperation
 from .ptp import DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import DEFAULT_PORT, PtpIpConnection, PtpIpError
@@ -94,6 +95,26 @@ def build_parser() -> argparse.ArgumentParser:
     raw.add_argument("params", type=_int, nargs="*")
     raw.add_argument("-o", "--out", type=Path, help="write the data phase to this file")
     raw.add_argument("--no-session", action="store_true", help="skip OpenSession")
+
+    # Not a camera command: it works on pairing bytes, so no connection options.
+    wifi = sub.add_parser(
+        "wifi", help="decrypt the camera's WiFi SSID and password from the pairing"
+    )
+    wifi.add_argument(
+        "pairing",
+        type=Path,
+        nargs="?",
+        help="JSON from the pairing run (stage1/stage2/stage4/config as hex)",
+    )
+    wifi.add_argument("--stage1", help="stage 1 handshake message, hex (ours)")
+    wifi.add_argument("--stage2", help="stage 2 handshake message, hex (camera)")
+    wifi.add_argument("--stage4", help="stage 4 handshake message, hex (camera)")
+    wifi.add_argument("--config", help="the 0x2004 connection-configuration blob, hex")
+    wifi.add_argument(
+        "--connect",
+        action="store_true",
+        help="print an nmcli line to join the network, do not run it",
+    )
 
     # Not a camera command: it reads a file, so it skips the connection options.
     snoop = sub.add_parser("btsnoop", help="decode the ATT/GATT traffic in a Bluetooth capture")
@@ -327,6 +348,56 @@ def cmd_btsnoop(args: argparse.Namespace) -> int:
     return 0 if capture.packets else 1
 
 
+def cmd_wifi(args: argparse.Namespace) -> int:
+    """Recover the camera's WiFi credentials from what pairing captured.
+
+    Reads the three handshake messages and the 0x2004 blob -- either from a
+    JSON file the pairing tool wrote, or from --stage1/--stage2/--stage4/--config
+    on the command line -- and prints the SSID and password. Nothing here talks
+    to the camera; it is pure decryption of bytes already in hand.
+    """
+    fields = {"stage1": args.stage1, "stage2": args.stage2, "stage4": args.stage4,
+              "config": args.config}
+    if args.pairing is not None:
+        data = json.loads(args.pairing.read_text())
+        for key in fields:
+            fields[key] = fields[key] or data.get(key)
+
+    missing = [k for k, v in fields.items() if not v]
+    if missing:
+        print(
+            f"error: missing {', '.join(missing)} -- pass a pairing JSON or the "
+            "--stage1/--stage2/--stage4/--config options",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        raw = {k: bytes.fromhex(v.replace(" ", "")) for k, v in fields.items()}
+    except ValueError as exc:
+        print(f"error: not valid hex: {exc}", file=sys.stderr)
+        return 1
+
+    cred = lssec.decrypt_config_from_handshake(
+        raw["stage1"], raw["stage2"], raw["stage4"], raw["config"]
+    )
+    if not cred.ssid:
+        print("error: decryption produced an empty SSID -- wrong handshake values?",
+              file=sys.stderr)
+        return 1
+
+    print(f"SSID      {cred.ssid}")
+    print(f"password  {cred.password}")
+    if args.connect:
+        # Printed, not run: joining the camera's network drops the link this
+        # session may be running over, so leave that decision to the operator.
+        print(
+            f"\n# to join the camera's network:\n"
+            f"nmcli device wifi connect {cred.ssid!r} password {cred.password!r}"
+        )
+    return 0
+
+
 COMMANDS = {
     "probe": cmd_probe,
     "info": cmd_info,
@@ -335,6 +406,7 @@ COMMANDS = {
     "liveview": cmd_liveview,
     "stream": cmd_stream,
     "raw": cmd_raw,
+    "wifi": cmd_wifi,
     "btsnoop": cmd_btsnoop,
 }
 

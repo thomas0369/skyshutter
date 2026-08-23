@@ -91,9 +91,31 @@ beschrieben, samt der Fallstricke, die dabei aufgetreten sind.
 | `skyshutter stream --http-port 8080` | Livebild im Browser |
 | `skyshutter events` | Ereignisse der Kamera mitlesen |
 | `skyshutter raw 0x9203 -o frame.bin` | beliebige Operation absetzen |
+| `skyshutter wifi pairing.json` | SSID und Passwort aus der Kopplung entschlüsseln |
 | `skyshutter btsnoop datei.log` | Bluetooth-Mitschnitt auswerten |
 
 Global: `--host`, `--port`, `--guid`, `--name`, `--timeout`, `-v`.
+
+## WLAN-Zugangsdaten gewinnen
+
+Die Kamera gibt SSID und Passwort ihres Access Points verschlüsselt über
+Bluetooth heraus, und das Passwort wechselt. `skyshutter wifi` rechnet beides
+aus dem zurück, was beim Koppeln ohnehin über die Leitung geht — ohne
+Gerätegeheimnis, für jede Kopplung neu.
+
+```bash
+# beim Koppeln die Handshake-Werte mitschreiben (Windows-Werkzeug, s. tools/):
+python tools/ble-probe.py pairing --register skyshutter --pairing-json pairing.json
+
+# daraus die Zugangsdaten entschlüsseln:
+skyshutter wifi pairing.json
+skyshutter wifi pairing.json --connect     # gibt zusätzlich die nmcli-Zeile aus
+```
+
+Das Verfahren ist die Nikon-eigene Blowfish-Kette, aus der Hersteller-App
+rekonstruiert und gegen echte Hardware verifiziert — Details in
+[docs/referenz.md](docs/referenz.md), Abschnitt „Verschlüsselung der
+Zugangsdaten".
 
 ## Als Bibliothek
 

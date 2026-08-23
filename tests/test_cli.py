@@ -122,3 +122,60 @@ def test_verbose_flag_is_kept_when_given_before_the_subcommand(
     assert args.verbose == 2
     assert build_parser().parse_args(["probe", "-v"]).verbose == 1
     assert not hasattr(build_parser().parse_args(["probe"]), "verbose")
+
+
+def _synthetic_pairing_json(tmp_path: Path) -> Path:
+    """A pairing JSON built from made-up numbers -- no real device data."""
+    import json
+
+    from skyshutter import lssec
+
+    own_ts = bytes.fromhex("1122334455667788")
+    camera_ts = bytes.fromhex("99aabbccddeeff00")
+    device_id = bytes.fromhex("0102030405060708")
+    stage4_payload = bytes.fromhex("4142434445464748")
+    salt_index = 5
+    challenge = lssec._mac(lssec._SALTS[salt_index] + camera_ts + own_ts)
+    key = lssec.session_key(stage4_payload, device_id, own_ts, camera_ts, challenge)
+    bf = lssec._Blowfish(key)
+    zero = bytes(8)
+    ssid = b"NIGHTCAM_TEST".ljust(32, b"\x00")
+    password = b"hunter2secret".ljust(64, b"\x00")
+    config = bytes([0x03]) + bf.encrypt_cbc(ssid, zero) + bf.encrypt_cbc(password, zero) + b"\x03"
+
+    doc = {
+        "stage1": (b"\x01" + own_ts + device_id).hex(),
+        "stage2": (b"\x02" + camera_ts + challenge).hex(),
+        "stage4": (b"\x04" + bytes(8) + stage4_payload).hex(),
+        "config": config.hex(),
+    }
+    path = tmp_path / "pairing.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def test_wifi_decrypts_from_a_pairing_json(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _synthetic_pairing_json(tmp_path)
+    assert main(["wifi", str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "NIGHTCAM_TEST" in out
+    assert "hunter2secret" in out
+
+
+def test_wifi_connect_prints_an_nmcli_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = _synthetic_pairing_json(tmp_path)
+    assert main(["wifi", str(path), "--connect"]) == 0
+    out = capsys.readouterr().out
+    assert "nmcli device wifi connect" in out
+    assert "NIGHTCAM_TEST" in out
+
+
+def test_wifi_without_values_explains_what_is_missing(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["wifi"]) == 1
+    assert "missing" in capsys.readouterr().err

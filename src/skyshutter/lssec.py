@@ -188,3 +188,41 @@ def decrypt_config(config: bytes, key: bytes) -> WifiCredentials:
     ssid = bf.decrypt_cbc(config[1:33], zero)
     password = bf.decrypt_cbc(config[33:97], zero)
     return WifiCredentials(_unpad(ssid), _unpad(password))
+
+
+#: Where each value sits inside a 17-byte handshake message:
+#: stage byte, 8-byte timestamp, 4-byte device, 4-byte nonce.
+def _timestamp(msg: bytes) -> bytes:
+    return msg[1:9]
+
+
+def _device_nonce(msg: bytes) -> bytes:
+    return msg[9:17]
+
+
+def decrypt_config_from_handshake(
+    stage1: bytes, stage2: bytes, stage4: bytes, config: bytes
+) -> WifiCredentials:
+    """Recover the WiFi credentials straight from the pairing handshake.
+
+    Takes the three handshake messages the client saw -- stage 1 (ours),
+    stage 2 and stage 4 (the camera's) -- and the 0x2004 blob, and returns the
+    access point's SSID and password. Everything the derivation needs is in
+    those bytes:
+
+      * own timestamp and device id from stage 1
+      * camera timestamp and challenge from stage 2
+      * the payload from stage 4
+
+    This is the whole point of the module: the credentials fall out of what the
+    client already captured while pairing, with no device secret and no matter
+    how often the camera rotates the password.
+    """
+    key = session_key(
+        stage4_payload=_device_nonce(stage4),
+        device_id=_device_nonce(stage1),
+        own_ts=_timestamp(stage1),
+        camera_ts=_timestamp(stage2),
+        challenge=_device_nonce(stage2),
+    )
+    return decrypt_config(config, key)
