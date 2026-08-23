@@ -26,7 +26,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
 | **Offenes Gate** | **Es fehlt die Bluetooth-CLASSIC-Verbindung (RFCOMM/SPP).** btsnoop + APK belegen: SnapBridge nutzt BLE **und** klassisches RFCOMM (PTP über SPP, `sppMaxDataLength` aus `0x2004`) **und** WLAN. Ohne die klassische Verbindung bleibt die Kamera `INVALID_WAKE` und ignoriert den `0x2005`-Write. Unser Client spricht nur BLE — das erklärt alle bisherigen Fehlschläge. `0x2021`-Wecker widerlegt |
-| **Nächster Schritt** | RFCOMM/SPP-**Client** bauen: nach BLE-Auth die klassische Verbindung zur Kamera öffnen (ausgehend, Kanal aus SDP/Mitschnitt), `0x2001` sollte dann `VALID_WAKE` melden → `0x2005` → AP. `rfcomm-listen.py` war die falsche Richtung |
+| **Nächster Schritt** | **Kombinierte Orchestrierung.** `rfcomm-connect.py` ist gebaut (ausgehend zu `5e8945b0…`), aber der SPP-Dienst erscheint erst nach BLE-Vorbereitung. Also: BLE-Auth (`--like-app`) → prüfen, ob `5e8945b0…` per SDP auftaucht → RFCOMM verbinden → `0x2001` sollte `VALID_WAKE` sein → `0x2005` → AP |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,27 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — RFCOMM-Richtung geklärt: ausgehender Client zu `5e8945b0…`; Dienst im Ruhezustand nicht angeboten
+Quelle:     btsnoop (`btsock_rfc_connect`) + neues Werkzeug `rfcomm-connect.py`.
+Fund:       Die App ist RFCOMM-**Client**: `btsock_rfc_connect: service_uuid:
+            5e8945b0-9525-11e3-a5e2-0800200c9a66`. Unser `rfcomm-listen.py` hatte
+            die Richtung falsch (wir lauschten). Neues `rfcomm-connect.py`
+            verbindet ausgehend zu genau dieser UUID.
+Hardware:   `rfcomm-connect.py` findet die gekoppelte Kamera
+            (`P1100…`, Classic-Adresse `7c:b8:da:a6:4f:fe`), aber die
+            **SDP-Abfrage nach `5e8945b0…` liefert im Ruhezustand keinen Dienst.**
+            Die App verbindet ihn nur, wenn die Kamera zuvor über den BLE-Flow in
+            den Remote-Zustand versetzt wurde.
+Adress-     Der btsnoop-RFCOMM-Connect zielt auf `…2d:4c`, nicht `…4f:fe`.
+Rätsel:     `2d:4c` ist im Handy-Log ein gebondetes Gerät **mit BLE-Schlüsseln**
+            (die BLE-Identität der Kamera), `4f:fe` die klassische Bond-Adresse.
+            Dual-Mode-Gerät mit getrennten BR/EDR- und LE-Adressen — noch nicht
+            vollständig aufgelöst, welche RFCOMM trägt.
+Konsequenz: RFCOMM lässt sich **nicht isoliert** testen — der SPP-Dienst
+            erscheint erst nach der BLE-Vorbereitung. Nächster Test ist die
+            **kombinierte Orchestrierung**: BLE-Auth (`--like-app`) → prüfen, ob
+            danach `5e8945b0…` per SDP auftaucht → RFCOMM verbinden → `0x2005`.
 
 ### 23.08.2026 — Der eigentliche fehlende Teil: eine Bluetooth-CLASSIC-Verbindung (RFCOMM), nicht nur BLE
 Quelle:     btsnoop der funktionierenden SnapBridge-Fernaufnahme + APK

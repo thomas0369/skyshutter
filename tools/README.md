@@ -37,6 +37,7 @@ Für USB genügt der Linux-Python in WSL: `pip install -e '.[usb]'`, dazu
 | `ble-proxy.py` | **Windows-Python** | `bleak` **und** `winrt-*` |
 | `ble-camera-sim.py` | **Windows-Python** | `winrt-*`, `pycryptodome` |
 | `rfcomm-listen.py` | **Windows-Python** | `winrt-*` |
+| `rfcomm-connect.py` | **Windows-Python** | `winrt-*` |
 | `bt_state.ps1` | PowerShell | — |
 | `pair.sh` | WSL-Bash | ruft die obigen auf |
 | `nikon_pairing.py` | überall | `pycryptodome` |
@@ -148,8 +149,16 @@ Verkettetes Blowfish, acht Salt-Paare, beide Richtungen. Von den anderen
 Werkzeugen eingebunden, einzeln testbar.
 
 **`rfcomm-listen.py`** — bietet einen seriellen Dienst an, zu dem die Kamera
-sich verbinden könnte. Tut sie nicht; sie bietet ihrerseits nur Apples
-Zubehörkanal an. Bleibt als dokumentierter Irrweg liegen.
+sich verbinden könnte. Der Mitschnitt (23.08.) zeigt: **die Richtung war falsch**
+— die App verbindet sich *ausgehend* zur SPP-Dienst-UUID der Kamera, nicht
+umgekehrt. Bleibt als dokumentierter Irrweg liegen; Ersatz ist `rfcomm-connect.py`.
+
+**`rfcomm-connect.py`** — verbindet sich *ausgehend* zur klassischen
+SPP-Verbindung der Kamera (UUID `5e8945b0-9525-11e3-a5e2-0800200c9a66`), so wie
+SnapBridge es tut. Diese klassische Verbindung fehlte unserem BLE-only-Ansatz und
+ist sehr wahrscheinlich, was die Kamera aus `INVALID_WAKE` holt. Findet die
+gekoppelte Kamera und öffnet den Dienst — der aber erst erscheint, wenn die
+Kamera über den BLE-Flow in den Remote-Zustand versetzt wurde.
 
 **`bt_state.ps1`** — Funk aus, Funk an. Klingt trivial, ist es nicht: Nach
 mehreren Verbindungszyklen findet der Windows-Stack gar nichts mehr, auch keine
