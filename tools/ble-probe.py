@@ -381,6 +381,13 @@ ESTABLISH_UUID = "00002005-3dd4-4255-8d62-6dc7b9bd5561"
 TIME_UUID = "00002006-3dd4-4255-8d62-6dc7b9bd5561"
 CONTROL_POINT_UUID = "00002008-3dd4-4255-8d62-6dc7b9bd5561"
 FEATURE_UUID = "00002009-3dd4-4255-8d62-6dc7b9bd5561"
+CONTROL_FOR_CONTROL_UUID = "00002021-3dd4-4255-8d62-6dc7b9bd5561"
+
+# 0x2021 LSS_CONTROL_POINT_FOR_CONTROL request frame (little-endian):
+# [len(2)] [opcode(1)] [reserved(1)] [mode(1)]. RemoteControl = opcode 0x11,
+# mode REMOTE_CONTROL=1. The vendor's startRemoteControl sends this and then
+# expects POWER_CONTROL to read VALID_WAKE -- so it is the camera's wake trigger.
+REMOTE_CONTROL_ON = bytes.fromhex("0500110001")
 SERVER_NAME_UUID = "00002003-3dd4-4255-8d62-6dc7b9bd5561"
 
 # 0x2001 POWER_CONTROL is a one-byte enum. INVALID_WAKE means the camera will
@@ -568,6 +575,27 @@ async def _pairing_once(args) -> None:
                 after = bytes(await client.read_gatt_char(ESTABLISH_UUID))
                 mark = "  <-- CHANGED" if after != before else ""
                 log(f"  0x2005 <- {value.hex()}: {verdict}, now {after.hex()}{mark}")
+
+        if args.wake:
+            # Reconstructed from V0.startRemoteControl: write the RemoteControl
+            # request to 0x2021, then the camera's POWER_CONTROL (0x2001) should
+            # flip from INVALID_WAKE to VALID_WAKE ("wake up and function
+            # effective"). This is the wake trigger the plain 0x2005 write lacks.
+            try:
+                before = bytes(await client.read_gatt_char(POWER_UUID))
+                print(f"\n  0x2001 vor Wake  {hexdump(before)}  "
+                      f"{POWER_TYPES.get(before[0] if before else 0xFF, '?')}")
+                print(f"  0x2021 write     {REMOTE_CONTROL_ON.hex()}  (RemoteControl ON)")
+                await client.write_gatt_char(
+                    CONTROL_FOR_CONTROL_UUID, REMOTE_CONTROL_ON, response=True
+                )
+                await asyncio.sleep(1.5)
+                after = bytes(await client.read_gatt_char(POWER_UUID))
+                name = POWER_TYPES.get(after[0] if after else 0xFF, "?")
+                mark = "  <-- geweckt!" if name == "VALID_WAKE" else "  (noch nicht VALID_WAKE)"
+                print(f"  0x2001 nach Wake {hexdump(after)}  {name}{mark}")
+            except Exception as exc:
+                print(f"\n  Wake fehlgeschlagen: {type(exc).__name__}: {str(exc)[:80]}")
 
         if args.establish:
             payload = bytes.fromhex(args.establish)
@@ -794,6 +822,11 @@ def main() -> None:
     )
     pairing.add_argument(
         "--sweep", action="store_true", help="try each plausible value on 0x2005"
+    )
+    pairing.add_argument(
+        "--wake",
+        action="store_true",
+        help="send RemoteControl on 0x2021 to wake the camera (VALID_WAKE) before --establish",
     )
     pairing.add_argument(
         "--no-connreq-reset",
