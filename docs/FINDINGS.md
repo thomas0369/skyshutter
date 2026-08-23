@@ -25,8 +25,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **AP-Start.** `0x01` auf `0x2005` startet den Access Point nicht allein (23.08. gemessen). Die App-Analyse (23.08., drei Durchläufe) zeigt: **nach `0x2005` sendet die App nichts mehr** — der fehlende Schritt ist eine **Vorbedingung davor** (in einer Sitzung: Auth, dann `0x2008` ConnectionRequest→OFF falls ON, `0x2001`-Gate lesen), kein Folge-Byte |
-| **Nächster Schritt** | `ble-probe.py pairing --register skyshutter --establish 01 --hold 60` — spielt jetzt die volle Hersteller-Vorbedingungskette und meldet `0x2008`/`0x2001`-Zustand; zeigt, ob `conn` überhaupt ON war und ob der AP dann erscheint |
+| **Offenes Gate** | **`0x2001 = INVALID_WAKE`.** Live gemessen (23.08.): die Kamera meldet auf POWER_CONTROL „remote shooting UNAVAILABLE". Die App überspringt bei diesem Wert den `0x2005`-Write ganz. `0x2008` (stand auf OFF, No-Op) und Auth (`0x2005` wird angenommen) sind als Gate ausgeschlossen. `VALID_WAKE` ist ein **Kamerazustand**, kein BLE-Kommando |
+| **Nächster Schritt** | `0x2001` wiederholt lesen, während die Kamera aus dem Menü auf den Aufnahme-Screen wechselt bzw. Fernaufnahme aktiviert wird — herausfinden, welcher Zustand `INVALID_WAKE` → `VALID_WAKE` (0x04) kippt. Erst dann bringt `0x2005` den AP |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,45 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — Das WLAN-Gate ist `0x2001 = INVALID_WAKE`, nicht ein BLE-Schritt
+Kommando:   `ble-probe.py pairing --register skyshutter --establish 01 --hold 60
+            --quick`, ausgeführt über das Windows-Python aus der WSL-Session,
+            Kamera in Reichweite (RSSI −58), Kameramenü offen.
+Aufbau:     Voller Vier-Stufen-Handshake in-session, dann die nachgebaute
+            Hersteller-Vorbedingungskette (`0x2008` → `0x2001` → `0x2004` →
+            `0x2005`).
+Ergebnis:   ```
+            -> authenticated; als 'skyshutter' registriert
+            0x2008 before  1100  (ConnectionRequest = 0 = OFF)
+              -> App würde nichts schreiben; übersprungen
+            0x2001 power   03    INVALID_WAKE  (remote shooting UNAVAILABLE)
+            0x2004 config  102B  Chiffrat (SSID+PW, als gekoppelter Client)
+            0x2005 before  03
+            0x2005 write   01    -> accepted
+            danach Disconnect; netsh: kein P1100-Netz
+            ```
+Deutung:    **Zwei Kandidaten fallen weg, einer bleibt.**
+            (1) `0x2008` stand schon auf OFF — die Kamera kommt in unserer
+            Session nie in ConnectionRequest=ON, der Reset ist ein No-Op. **Nicht
+            das Gate.**
+            (2) Der `0x2005`-Write wird angenommen — Auth ist es also auch nicht.
+            (3) **`0x2001 = INVALID_WAKE` ist das Gate.** Die App liest genau
+            dieses Byte als „Remote Shooting Available"; bei `INVALID_WAKE`
+            springt sie (`Z3` ~2437) auf `goto_282` und **überspringt den
+            `0x2005`-Write ganz** — die App selbst würde im aktuellen
+            Kamerazustand keinen AP starten.
+            POWER_CONTROL wird auf dem WiFi-Pfad **nie geschrieben** (Code
+            verifiziert). `VALID_WAKE` (0x04) ist damit ein **Kamera-Zustand**,
+            kein Kommando, das uns fehlt — er hängt an Menü/Modus/Power der
+            Kamera. Der Wake-Status steckt sogar im Advertisement
+            (`hasQuickWakeUp`).
+Offen:      Welcher Kamerazustand macht `0x2001` = `VALID_WAKE`? Test: `0x2001`
+            wiederholt lesen, während die Kamera aus dem Menü auf den
+            Aufnahme-Screen geht / Fernaufnahme im Kameramenü aktiviert wird.
+Folge:      Gate neu benannt: nicht „fehlender BLE-Schritt", sondern
+            „Kamera meldet INVALID_WAKE". `--hold`/`--establish`-Kette bleibt als
+            Diagnosewerkzeug; nächster Lauf pollt `0x2001` gegen Kamera-Aktionen.
 
 ### 23.08.2026 — App-Analyse: nach `0x2005` kommt nichts mehr — der fehlende Schritt liegt davor
 Art:        **Analyse, keine Hardware-Messung.** Quelle: dekompilierte

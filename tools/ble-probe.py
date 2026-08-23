@@ -91,6 +91,37 @@ async def find(args):
     )
 
 
+async def cmd_power(args) -> None:
+    """Poll POWER_CONTROL (0x2001) and report the wake state as it changes.
+
+    The WiFi path gates on this byte: the vendor app enables the access point
+    only when it is not INVALID_WAKE. VALID_WAKE (0x04) is a camera-side state,
+    so this watches for the flip while someone changes the camera (leave the
+    menu, wake it, start remote photography). Read-only.
+    """
+    device = await find(args)
+    async with BleakClient(device, timeout=args.timeout) as client:
+        print(f"connected {device.address}  mtu={client.mtu_size}")
+        print("  polling 0x2001 -- change the camera state now (Strg-C beendet)")
+        last = None
+        deadline = time.monotonic() + args.seconds
+        while time.monotonic() < deadline and client.is_connected:
+            try:
+                value = bytes(await client.read_gatt_char(POWER_UUID))
+                code = value[0] if value else 0xFF
+                name = POWER_TYPES.get(code, "?")
+            except Exception as exc:
+                print(f"  read error: {type(exc).__name__}: {str(exc)[:60]}")
+                break
+            if value != last:
+                mark = "  <-- AP moeglich" if name == "VALID_WAKE" else ""
+                print(f"  0x2001 = {value.hex()}  {name}{mark}", flush=True)
+                last = value
+            await asyncio.sleep(args.interval)
+        if not client.is_connected:
+            print("  ! Verbindung getrennt")
+
+
 async def cmd_scan(args) -> None:
     seen: dict = {}
 
@@ -665,6 +696,11 @@ def main() -> None:
 
     sub.add_parser("dump", help="print the GATT tree").set_defaults(run=cmd_dump)
     sub.add_parser("read", help="read every readable characteristic").set_defaults(run=cmd_read)
+
+    power = sub.add_parser("power", help="poll 0x2001 wake state while you change the camera")
+    power.add_argument("--seconds", type=float, default=120.0, help="how long to poll")
+    power.add_argument("--interval", type=float, default=2.0, help="seconds between reads")
+    power.set_defaults(run=cmd_power)
 
     watch = sub.add_parser("watch", help="subscribe to notify/indicate and print traffic")
     watch.add_argument("--seconds", type=float, default=60.0)
