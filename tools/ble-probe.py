@@ -390,10 +390,13 @@ CONTROL_FOR_CONTROL_UUID = "00002021-3dd4-4255-8d62-6dc7b9bd5561"
 REMOTE_CONTROL_ON = bytes.fromhex("0500110001")
 SERVER_NAME_UUID = "00002003-3dd4-4255-8d62-6dc7b9bd5561"
 
-# 0x2001 POWER_CONTROL is a one-byte enum. INVALID_WAKE means the camera will
-# not accept remote shooting; the vendor app reads it as a gate before WiFi.
-POWER_TYPES = {0xFF: "UNDEFINED", 0x01: "STOP", 0x02: "WAKE_WAIT",
-               0x03: "INVALID_WAKE", 0x04: "VALID_WAKE"}
+# 0x2001 POWER_CONTROL is a one-byte enum. WIRE values (field a / getByte in
+# BlePowerControlData$Types, NOT the Java ordinals) verified from the smali:
+# these are what the camera actually puts on the wire. VALID_WAKE means ready.
+# NOTE: 0x03 == VALID_WAKE. An earlier reading here used the ordinals
+# (INVALID_WAKE=3) and wrongly flagged the ready camera as not-ready.
+POWER_TYPES = {0xFF: "UNDEFINED", 0x00: "STOP", 0x01: "WAKE_WAIT",
+               0x02: "INVALID_WAKE", 0x03: "VALID_WAKE"}
 
 
 def auth_message(stage: int, stamp: bytes, device_id: bytes, nonce: bytes) -> bytes:

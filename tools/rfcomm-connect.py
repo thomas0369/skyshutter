@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
-"""Connect out to the camera's classic Bluetooth serial service, like the app.
+"""Connect out to a classic Bluetooth serial (SPP) service on a bonded device.
 
-The btsnoop of a working SnapBridge remote-photography session shows the app
-does NOT wait for the camera on RFCOMM -- it connects *out* to the camera's own
-SPP service, UUID 5e8945b0-9525-11e3-a5e2-0800200c9a66. Our earlier
-rfcomm-listen.py had the direction backwards. Without this classic connection
-the camera stays INVALID_WAKE and ignores the 0x2005 WiFi-establishment write,
-which is why every BLE-only attempt to raise the access point failed.
+!!! MISATTRIBUTED TARGET -- kept only as a general SPP-client tool. !!!
+The btsnoop RFCOMM connect to UUID 5e8945b0-9525-11e3-a5e2-0800200c9a66 was
+first read as SnapBridge->camera, but the deep-dive (23.08.2026) proved it goes
+to a Samsung "Watch Ultra" (addr ...2d:4c, dev_class 28:07:04); 5e8945b0 is a
+Samsung UUID, not Nikon. The camera (P1100, ...4f:fe, dev_class 08:06:20) opens
+NO RFCOMM data channel at all -- its only classic step is a createBond (SSP).
+So this tool is NOT part of the camera flow. See docs/REMOTE_SEQUENCE.md.
+The wake gate was also a misread: 0x2001=0x03 is VALID_WAKE, not INVALID_WAKE.
 
-This finds the paired camera, opens that RFCOMM service and holds it, dumping
-anything that arrives. A classic connection to a bonded device needs no
-advertising window, so the camera only has to be on and in range.
+Left in place because an outgoing SPP client may still be useful elsewhere.
 
     python tools/rfcomm-connect.py --hold 60
 
-Pair first (classic-pair.py pair). Runs under the Windows Python.
+Runs under the Windows Python.
 """
 
 from __future__ import annotations

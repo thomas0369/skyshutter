@@ -25,8 +25,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **Es fehlt die Bluetooth-CLASSIC-Verbindung (RFCOMM/SPP).** btsnoop + APK belegen: SnapBridge nutzt BLE **und** klassisches RFCOMM (PTP über SPP, `sppMaxDataLength` aus `0x2004`) **und** WLAN. Ohne die klassische Verbindung bleibt die Kamera `INVALID_WAKE` und ignoriert den `0x2005`-Write. Unser Client spricht nur BLE — das erklärt alle bisherigen Fehlschläge. `0x2021`-Wecker widerlegt |
-| **Nächster Schritt** | **Kombinierte Orchestrierung.** `rfcomm-connect.py` ist gebaut (ausgehend zu `5e8945b0…`), aber der SPP-Dienst erscheint erst nach BLE-Vorbereitung. Also: BLE-Auth (`--like-app`) → prüfen, ob `5e8945b0…` per SDP auftaucht → RFCOMM verbinden → `0x2001` sollte `VALID_WAKE` sein → `0x2005` → AP |
+| **Offenes Gate** | **Kein Wake-Gate — die Kamera war bereit.** Deep-Dive (btsnoop+APK, 23.08.) korrigiert zwei Fehlschlüsse: `0x2001=0x03` ist **VALID_WAKE** (Wire-Enum STOP=0…VALID_WAKE=3, nicht die Ordinale); und die RFCOMM-Verbindung ging an eine **Samsung-Uhr**, nicht die Kamera. Echte vermutliche Lücken unseres Versuchs: **CCCDs nie gesetzt** (Indicate 2000 / Notify 2008), Establishment nicht in voller In-Session-Kette mit Classic-**Bond**, und nach `0x2005` der WiFi-Direct-**AP-Beitritt** (Creds aus `0x2004`) statt nur scannen. Volle belegte Sequenz: [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md) |
+| **Nächster Schritt** | Client-Flow an [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md) ausrichten: CCCD Indicate 2000 + Notify 2008 → 4-Stufen-Auth → `createBond` (classic 4f:fe) → `0x2004` lesen → `0x2005`=01 → dann WiFi-Direct beitreten (SSID/PW aus `lssec`) → PTP/IP `host:15740`, Live View `0x9201`/`0x9428` |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,35 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — Deep-Dive (12 Agenten): zwei Fehlschlüsse widerlegt, volle Sequenz belegt
+Art:        Multi-Agenten-Analyse (btsnoop + APK, 6 Miner + Synthese + 3
+            Verifizierer + Gap-Fill), plan `zesty-leaping-peacock`.
+Ergebnis:   Volle Fernaufnahme-Startsequenz rekonstruiert → [REMOTE_SEQUENCE.md].
+            **Zwei frühere Schlüsse dieser Session sind widerlegt:**
+            1. **`0x2001=0x03` ist `VALID_WAKE`, nicht `INVALID_WAKE`.** Selbst
+               verifiziert in `BlePowerControlData$Types.smali`: der 3.
+               Konstruktor-Parameter (Feld `a`/`getByte`, = Wire-Wert) ist
+               STOP=0, WAKE_WAIT=1, INVALID_WAKE=2, VALID_WAKE=3. Früher wurden
+               die Java-**Ordinale** (1/2/3/4) als Wire-Werte gelesen → falsch.
+               **Die Kamera war bei allen Tests bereit; „INVALID_WAKE-Gate" gab
+               es nie.**
+            2. **Kein RFCOMM/SPP-Datenkanal zur Kamera.** Die RFCOMM-Verbindung
+               zu `5e8945b0…` ging an `…2d:4c` = **„Watch Ultra (T6WE)"**
+               (Samsung, dev_class 28:07:04) — `5e8945b0` ist Samsung, nicht
+               Nikon. Kamera = `…4f:fe`, „P1100_…", dev_class 08:06:20;
+               sie macht nur einen klassischen **createBond** (SSP), keinen
+               Datenkanal. `tools/rfcomm-connect.py` zielt falsch.
+            Bestätigt/präzisiert: LE-Link **unverschlüsselt** (kein LE-Pairing);
+            CCCDs **Indicate 2000 + Notify 2008** vor Auth; AUTH 17-B-Frames;
+            NAME 32 B UTF-8; TIME 10 B LE; Establishment `0x01`=WiFi (bit0);
+            WLAN = WiFi-Direct, Creds über `0x2004`; PTP/IP `host:15740`, Live
+            View `0x9201` start / `0x9428` GetLiveViewImageEx / `0x9203` end.
+Folge:      `ble-probe.py` POWER_TYPES auf Wire-Werte korrigiert. Neuer Client-
+            Flow siehe Stand-Block. Verbleibende Lücken (AUTH-Werte, AP-SSID/PW,
+            WiFi-Bring-up) nur an der Hardware bzw. per WLAN-Mitschnitt.
+
+[REMOTE_SEQUENCE.md]: REMOTE_SEQUENCE.md
 
 ### 23.08.2026 — Kombinierter Test: LE-`pair()` vor dem Handshake trennt die Kamera (Timing zählt)
 Kommando:   Kombiniertes Skript: BLE verbinden → Notify 2000/2008 → `pair()` →
