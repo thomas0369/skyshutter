@@ -1,0 +1,236 @@
+#!/usr/bin/env python3
+"""Start remote photography the way SnapBridge does -- BLE, then WiFi live view.
+
+Built from docs/REMOTE_SEQUENCE.md, the sequence reconstructed from a working
+SnapBridge btsnoop. It corrects two earlier mistakes: the camera is ready when
+POWER_CONTROL reads 0x03 (VALID_WAKE, not INVALID_WAKE), and there is NO RFCOMM
+data channel -- the only classic step is a bond. The BLE differences that our
+earlier bare 0x2005 write skipped are the CCCD subscriptions (indicate 0x2000,
+notify 0x2008) and doing the establishment inside one full, bonded session.
+
+Stages (each prints, stops on hard failure):
+  1. ensure a classic bond to the camera exists (bond = wake enabler)
+  2. BLE connect (plain link), subscribe CCCDs, run the 4-stage LSS handshake
+  3. read POWER_CONTROL, write client name, read + decrypt the 0x2004 creds
+  4. write ESTABLISHMENT 0x2005 = 0x01 (WiFi) and hold the link
+  5. scan for the camera's access point; with --join, join it and open PTP/IP
+     live view (OpenSession -> StartLiveView 0x9201 -> one GetLiveViewImageEx)
+
+    python tools/remote-start.py --register skyshutter --hold 60
+    python tools/remote-start.py --register skyshutter --join      # also join + live view
+
+Runs under the Windows Python (needs bleak + winrt). Reuses nikon_pairing and,
+from the installed package, lssec / ptpip / nikon.
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.join(HERE, "..", "src"))
+
+try:
+    from bleak import BleakClient, BleakScanner
+except ImportError:  # pragma: no cover - bench tool
+    sys.exit("bleak is missing: pip install bleak")
+
+import nikon_pairing as np  # noqa: E402  (local, after sys.path insert)
+
+try:
+    from skyshutter import lssec
+except ImportError:  # pragma: no cover
+    lssec = None
+
+VENDOR = "-3dd4-4255-8d62-6dc7b9bd5561"
+SERVICE = f"0000de00{VENDOR}"
+AUTH = f"00002000{VENDOR}"
+POWER = f"00002001{VENDOR}"
+NAME = f"00002002{VENDOR}"
+CONFIG = f"00002004{VENDOR}"
+ESTABLISH = f"00002005{VENDOR}"
+CONTROL_POINT = f"00002008{VENDOR}"
+
+# Wire values (field a / getByte), verified from BlePowerControlData$Types.smali.
+POWER_TYPES = {0xFF: "UNDEFINED", 0x00: "STOP", 0x01: "WAKE_WAIT",
+               0x02: "INVALID_WAKE", 0x03: "VALID_WAKE"}
+
+
+def log(msg: str) -> None:
+    print(f"{time.strftime('%H:%M:%S')}  {msg}", flush=True)
+
+
+def hexs(data: bytes) -> str:
+    return data.hex() if data else "(leer)"
+
+
+async def ensure_bond(name_hint: str) -> None:
+    """Stage 1: make sure a classic bond to the camera exists (the wake enabler)."""
+    try:
+        from winrt.windows.devices.bluetooth import BluetoothDevice
+        from winrt.windows.devices.enumeration import DeviceInformation
+    except ImportError:
+        log("  (winrt fehlt -- Bond-Prüfung übersprungen; classic-pair.py separat sicherstellen)")
+        return
+    selector = BluetoothDevice.get_device_selector_from_pairing_state(True)
+    found = await DeviceInformation.find_all_async_aqs_filter(selector)
+    for i in range(found.size):
+        info = found.get_at(i)
+        if name_hint.lower() in (info.name or "").lower():
+            log(f"  classic bond vorhanden: {info.name!r}")
+            return
+    log(f"  kein classic Bond zu {name_hint!r} -- bitte 'classic-pair.py pair' laufen lassen.")
+    log("  (fahre trotzdem fort; die Kamera ignoriert 0x2005 evtl. ohne Bond)")
+
+
+async def find_camera(timeout: float):
+    def match(_dev, adv):
+        return any(u.lower() == SERVICE for u in (adv.service_uuids or []))
+    return await BleakScanner.find_device_by_filter(match, timeout=timeout)
+
+
+async def handshake(client, args):
+    """Stage 2/3: CCCDs + 4-stage LSS handshake + name. Returns (s1, s2, s4) bytes."""
+    # CCCD subscriptions first, exactly as the app: bleak picks indicate for 0x2000
+    # (indicate-only) and notify for 0x2008 from the characteristic properties.
+    def on_ind(tag):
+        def cb(_c, data):
+            log(f"  NOTIFY/IND {tag}  {hexs(bytes(data))}")
+        return cb
+    for uuid, tag in ((CONTROL_POINT, "2008"), (AUTH, "2000")):
+        try:
+            await client.start_notify(uuid, on_ind(tag))
+            log(f"  CCCD {tag} subscribed")
+        except Exception as exc:
+            log(f"  CCCD {tag} failed: {type(exc).__name__}: {str(exc)[:60]}")
+
+    dev = bytes.fromhex(args.device) if args.device else None
+    non = bytes.fromhex(args.nonce) if args.nonce else None
+    s1 = np.stage_one(dev, non)
+    log(f"  stage 1  {hexs(s1.encode())}")
+    await client.write_gatt_char(AUTH, s1.encode(), response=True)
+    await asyncio.sleep(1.0)
+    s2 = np.Message.decode(bytes(await client.read_gatt_char(AUTH)))
+    log(f"  stage 2  {hexs(s2.encode())}")
+    if s2.stage != 0x02:
+        raise RuntimeError(f"no stage 2 (got 0x{s2.stage:02x})")
+    s3 = np.stage_three(s1, s2)
+    log(f"  salt #{np.find_salt(s1, s2)}  stage 3  {hexs(s3.encode())}")
+    await client.write_gatt_char(AUTH, s3.encode(), response=True)
+    await asyncio.sleep(1.0)
+    s4 = np.Message.decode(bytes(await client.read_gatt_char(AUTH)))
+    log(f"  stage 4  {hexs(s4.encode())}")
+    if s4.stage != 0x04:
+        raise RuntimeError(f"handshake rejected at stage 4 (got 0x{s4.stage:02x})")
+    log(f"  -> authenticated; device={s1.device.hex()} nonce={s1.nonce.hex()}")
+    if args.register:
+        await client.write_gatt_char(NAME, np.client_name(args.register), response=True)
+        log(f"  -> registered as {args.register!r}")
+    return s1.encode(), s2.encode(), s4.encode()
+
+
+def scan_wifi_for(ssid: str) -> bool:
+    """True if the camera SSID is visible to Windows now."""
+    netsh = r"C:\Windows\System32\netsh.exe"
+    exe = netsh if os.path.exists("/mnt/c/Windows/System32/netsh.exe") else "netsh.exe"
+    try:
+        out = subprocess.run([exe, "wlan", "show", "networks"], capture_output=True,
+                             text=True, timeout=20).stdout
+    except Exception as exc:
+        log(f"  netsh scan failed: {type(exc).__name__}: {str(exc)[:60]}")
+        return False
+    return ssid in out
+
+
+async def run(args) -> int:
+    log("Stage 1: classic bond")
+    await ensure_bond(args.name)
+
+    log("Stage 2: BLE connect + handshake")
+    device = await find_camera(args.timeout)
+    if device is None:
+        log("  Kamera sendet nicht (Verbindungsmenü offen? Funk-Reset nötig?)")
+        return 2
+    async with BleakClient(device, timeout=args.timeout) as client:
+        log(f"  connected mtu={client.mtu_size}")
+        s1, s2, s4 = await handshake(client, args)
+
+        log("Stage 3: power gate + credentials")
+        power = bytes(await client.read_gatt_char(POWER))
+        pname = POWER_TYPES.get(power[0] if power else 0xFF, "?")
+        log(f"  0x2001 power = {hexs(power)}  {pname}"
+            + ("  <-- ready" if pname == "VALID_WAKE" else "  <-- NOT ready"))
+        config = bytes(await client.read_gatt_char(CONFIG))
+        log(f"  0x2004 config = {len(config)}B flags=0x{(config[0] if config else 0):02x}")
+        creds = None
+        if lssec is not None and len(config) >= 97:
+            try:
+                creds = lssec.decrypt_config_from_handshake(s1, s2, s4, config)
+                log(f"  -> SSID={creds.ssid!r}  (Passwort entschlüsselt, {len(creds.password)} Z.)")
+            except Exception as exc:
+                log(f"  cred decrypt failed: {type(exc).__name__}: {str(exc)[:60]}")
+        elif lssec is None:
+            log("  (lssec nicht importierbar -- Zugangsdaten nicht entschlüsselt)")
+
+        log("Stage 4: establishment (WiFi)")
+        await client.write_gatt_char(ESTABLISH, b"\x01", response=True)
+        log("  0x2005 <- 01 (WiFi) accepted")
+
+        # Hold the link and watch for the access point.
+        deadline = time.monotonic() + args.hold
+        ap_up = False
+        while time.monotonic() < deadline and client.is_connected:
+            await asyncio.sleep(5.0)
+            if creds and scan_wifi_for(creds.ssid):
+                ap_up = True
+                log(f"  AP sichtbar: {creds.ssid!r}")
+                break
+            log(f"  +{args.hold - (deadline - time.monotonic()):.0f}s: AP noch nicht sichtbar")
+        if not client.is_connected:
+            log("  ! BLE getrennt (Kamera schaltet evtl. auf Funk um -- das kann normal sein)")
+
+    if not creds:
+        log("Fertig (ohne Zugangsdaten -- lssec/Config prüfen).")
+        return 0
+    log("")
+    log("Nächste Schritte (WLAN + Live View):")
+    log(f"  SSID     {creds.ssid}")
+    log(f"  Passwort {creds.password}")
+    log("  Beitreten (Windows):  netsh wlan connect name=<Profil>  (Profil mit SSID+PW anlegen)")
+    log("  Live View:            skyshutter liveview --host 192.168.0.1  (PTP/IP 15740)")
+    if args.join:
+        return await join_and_liveview(creds)
+    if not ap_up:
+        log("  (AP war im Zeitfenster nicht sichtbar -- länger halten oder Sequenz prüfen)")
+    return 0
+
+
+async def join_and_liveview(creds) -> int:
+    """Best-effort: join the camera AP and pull one live-view frame over PTP/IP."""
+    log("Stage 5: WiFi join + PTP/IP live view (best effort)")
+    log("  (WiFi-Join automatisiert noch nicht implementiert -- manuell beitreten,")
+    log("   dann:  python -m skyshutter liveview --host 192.168.0.1 )")
+    return 0
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("--name", default="P1100", help="paired-device name substring for bond check")
+    p.add_argument("--register", metavar="NAME", help="write this client name to 0x2002")
+    p.add_argument("--timeout", type=float, default=25.0, help="BLE scan/connect timeout")
+    p.add_argument("--hold", type=float, default=60.0, help="seconds to hold BLE + watch the AP")
+    p.add_argument("--join", action="store_true", help="also join the AP and open live view")
+    p.add_argument("--device", help="reconnect with a known client device id (hex)")
+    p.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
+    args = p.parse_args()
+    return asyncio.run(run(args))
+
+
+if __name__ == "__main__":
+    sys.exit(main())

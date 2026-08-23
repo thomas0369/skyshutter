@@ -38,6 +38,7 @@ Für USB genügt der Linux-Python in WSL: `pip install -e '.[usb]'`, dazu
 | `ble-camera-sim.py` | **Windows-Python** | `winrt-*`, `pycryptodome` |
 | `rfcomm-listen.py` | **Windows-Python** | `winrt-*` |
 | `rfcomm-connect.py` | **Windows-Python** | `winrt-*` |
+| `remote-start.py` | **Windows-Python** | `bleak`, `winrt-*` |
 | `bt_state.ps1` | PowerShell | — |
 | `pair.sh` | WSL-Bash | ruft die obigen auf |
 | `nikon_pairing.py` | überall | `pycryptodome` |
@@ -78,19 +79,20 @@ python ble-probe.py session --seconds 0     # alle lesbaren Werte
 ### 3. Das WLAN starten
 
 ```bash
-python ble-probe.py pairing --register skyshutter --establish 01 --hold 60
+python remote-start.py --register skyshutter --hold 60
 ```
 
-`--establish 01` spielt jetzt die **volle Vorbedingungskette der Hersteller-App**
-in einer authentifizierten Sitzung, in ihrer Reihenfolge: `0x2008`
-ConnectionRequest → OFF (nur falls ON), `0x2001` Power-Gate lesen, `0x2004` Config
-lesen, dann `0x01` auf `0x2005`. Jeder Zustand wird ausgegeben. `--hold 60` hält
-die Verbindung, damit `netsh wlan show networks` das `P1100`-Netz sehen könnte.
+`remote-start.py` fährt die belegte Sequenz aus
+[docs/REMOTE_SEQUENCE.md](../docs/REMOTE_SEQUENCE.md): Bond prüfen → BLE verbinden
+→ **CCCDs** (Indicate `0x2000`, Notify `0x2008`) → 4-Stufen-Handshake →
+PowerControl lesen (`0x03` = **VALID_WAKE**, bereit) → `0x2004` lesen +
+Zugangsdaten entschlüsseln → `0x2005`=01 → AP scannen. Gibt SSID/Passwort aus.
 
-**Wirkung an der Hardware noch nicht bestätigt** — das ist das offene Gate. Die
-App-Analyse (docs/referenz.md, `0x2005`) zeigt: nach `0x2005` sendet die App
-nichts mehr, der fehlende Schritt liegt in dieser Kette davor. `--no-connreq-reset`
-lässt den `0x2008`-Write weg — für den A/B-Test, ob genau er den Unterschied macht.
+**Wirkung an der Hardware noch nicht bestätigt** — aber die frühere „INVALID_WAKE-
+/RFCOMM-Gate"-Erzählung ist widerlegt (siehe REMOTE_SEQUENCE.md): die Kamera war
+bereit. Die zu testenden Unterschiede sind die CCCDs, die volle In-Session-Kette
+mit Bond und der WiFi-Direct-Beitritt nach `0x2005`. Das alte
+`ble-probe.py pairing --establish 01` bleibt als Baustein/Diagnose bestehen.
 
 ### 3b. Die WLAN-Zugangsdaten mitschreiben und entschlüsseln
 
@@ -148,17 +150,21 @@ gleichzeitig unter dem Kameranamen auffindbar sein.
 Verkettetes Blowfish, acht Salt-Paare, beide Richtungen. Von den anderen
 Werkzeugen eingebunden, einzeln testbar.
 
-**`rfcomm-listen.py`** — bietet einen seriellen Dienst an, zu dem die Kamera
-sich verbinden könnte. Der Mitschnitt (23.08.) zeigt: **die Richtung war falsch**
-— die App verbindet sich *ausgehend* zur SPP-Dienst-UUID der Kamera, nicht
-umgekehrt. Bleibt als dokumentierter Irrweg liegen; Ersatz ist `rfcomm-connect.py`.
+**`remote-start.py`** — der **korrigierte Orchestrator** nach
+[docs/REMOTE_SEQUENCE.md](../docs/REMOTE_SEQUENCE.md): Bond prüfen → BLE verbinden
+→ CCCDs (Indicate 2000 / Notify 2008) → 4-Stufen-Handshake → PowerControl lesen
+(Wire-Wert `0x03`=VALID_WAKE) → `0x2004` lesen + Zugangsdaten via `lssec`
+entschlüsseln → `0x2005`=01 (WiFi) → AP scannen. Gibt SSID/Passwort und die
+nächsten Schritte (WLAN-Beitritt, PTP/IP-Live-View) aus. Das ist der aktuelle
+Weg, den AP hochzufahren.
 
-**`rfcomm-connect.py`** — verbindet sich *ausgehend* zur klassischen
-SPP-Verbindung der Kamera (UUID `5e8945b0-9525-11e3-a5e2-0800200c9a66`), so wie
-SnapBridge es tut. Diese klassische Verbindung fehlte unserem BLE-only-Ansatz und
-ist sehr wahrscheinlich, was die Kamera aus `INVALID_WAKE` holt. Findet die
-gekoppelte Kamera und öffnet den Dienst — der aber erst erscheint, wenn die
-Kamera über den BLE-Flow in den Remote-Zustand versetzt wurde.
+**`rfcomm-listen.py`** und **`rfcomm-connect.py`** — beide **Irrwege**, dokumentiert.
+Der Mitschnitt (23.08.) zeigte RFCOMM-Verkehr zur UUID
+`5e8945b0-9525-11e3-a5e2-0800200c9a66`, der erst als „App→Kamera" gelesen wurde;
+der Deep-Dive belegte aber: dieser Verkehr ging an eine **Samsung-Smartwatch**,
+nicht die Kamera. Die P1100 hat **keinen RFCOMM-Datenkanal** — ihr einziger
+Classic-Schritt ist ein `createBond`. Beide Werkzeuge bleiben nur als
+Untersuchungs-Spur liegen.
 
 **`bt_state.ps1`** — Funk aus, Funk an. Klingt trivial, ist es nicht: Nach
 mehreren Verbindungszyklen findet der Windows-Stack gar nichts mehr, auch keine
