@@ -100,6 +100,41 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 24.08.2026 (Nacht) — Passiver Bluetooth-Radar aktiv: Der Raspberry sendet jetzt NICHTS mehr
+Aufbau:     `tools/bt-listen.py` als root-Systemdienst (`bt-listen.service`) auf dem
+            Raspberry. Roh-HCI-Socket im exklusiven USER-Kanal, passiver LE-Scan
+            (scan_type 0x00 — der Adapter sendet kein einziges Bit), alle
+            Advertisements werden dekodiert (Adresse/Typ/RSSI/Name/UUIDs/
+            Manufacturer-Data), Nikon-Payload mit LSS-Byte in
+            `/tmp/camera_seen.json` gespiegelt (remote-start --wait-for-ad
+            bleibt kompatibel). Volle Ereignisliste in `/tmp/bt-radar.jsonl`.
+Belegt:     - **Der Kernel verweigert Scan-Kommandos über raw sockets, solange
+              bluetoothd läuft** (`Set scan parameters failed: Operation not
+              permitted` — hcitool UND eigener Code gleichermaßen). Der Weg
+              vorbei ist der HCI-USER-Kanal.
+            - **Der USER-Kanal bindet nur bei Adapter DOWN** (EBUSY bei UP —
+              bewiesen mit nativem C-Probe-Programm gegen alle Vermutungen:
+              bluetoothd/hciuart/bthelper stoppen reichte NICHT; erst
+              `hciconfig hci0 down` direkt vor dem Bind). bt-listen macht das
+              jetzt selbst.
+            - **bt-listen.service + maskierte bluetooth/hciuart/bthelper**:
+              udev/D-Bus ziehen bluetoothd sonst sofort wieder hoch und
+              töten den Radar über die Conflict-Kette. Maskiert ist die
+              maximale Sendefreiheit — nicht mal BlueZ-Hintergrundverkehr.
+            - Erste 25 s Testlauf: 9 Events von 3 Geräten (u. a. ADV_IND
+              public 7C:E9:… mit Manufacturer-Data — passiver Empfang
+              funktioniert ohne jede Sendung).
+Zweck:      Das 5a-Experiment von der anderen Seite: Falls UNSER Funkverkehr
+            (Scan-Requests, Inquiry, Pairing-Bombardement) die Kamera in den
+            Verweigerungsmodus treibt, sieht sie jetzt stundenlang absolute
+            Funkstille vom Raspberry — bei voller Beobachtung: Burst-/Pausen-
+            Muster, LSS-Byte-Wechsel (inkl. bit0-Mysterium), und ob die Kamera
+            über Nacht überhaupt noch advertised.
+Rückweg:    Für Pairing später: `sudo systemctl stop bt-listen &&
+            sudo systemctl unmask bluetooth hciuart &&
+            sudo systemctl start bluetooth pair-agent` (Agent bleibt als
+            user-Service konfiguriert).
+
 ### 23.08.2026 (Nacht) — Raspberry: BLE-Handshake top, Classic-Bond von der Kamera blockiert (Falle 5a)
 Aufbau:     Raspberry als Funk-Zentrale (siehe Abend-Messung). Ablauf nach
             pairing.md: BLE-Handshake → Inquiry → Pair mit BlueZ-Agent.
