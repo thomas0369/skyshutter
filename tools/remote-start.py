@@ -172,7 +172,8 @@ async def run(args) -> int:
         if lssec is not None and len(config) >= 97:
             try:
                 creds = lssec.decrypt_config_from_handshake(s1, s2, s4, config)
-                log(f"  -> SSID={creds.ssid!r}  (Passwort entschlüsselt, {len(creds.password)} Z.)")
+                log(f"  -> SSID={creds.ssid!r}  Passwort={creds.password!r}")
+                _write_creds(creds)  # for an external joiner (Mango): the pw rotates each session
             except Exception as exc:
                 log(f"  cred decrypt failed: {type(exc).__name__}: {str(exc)[:60]}")
         elif lssec is None:
@@ -235,6 +236,21 @@ async def run(args) -> int:
 def _netsh() -> str:
     p = "/mnt/c/Windows/System32/netsh.exe"
     return p if os.path.exists(p) else "netsh.exe"
+
+
+def _creds_path() -> str:
+    import tempfile
+    return os.path.join(tempfile.gettempdir(), "skyshutter_creds.txt")
+
+
+def _write_creds(creds) -> None:
+    """Write the session's fresh SSID+password so an external joiner (the Mango
+    repeater) can use them -- the camera rotates the password every session."""
+    try:
+        with open(_creds_path(), "w") as fh:
+            fh.write(f"{creds.ssid}\n{creds.password}\n")
+    except OSError:
+        pass
 
 
 def _profile_path() -> str:
