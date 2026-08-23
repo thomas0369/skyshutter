@@ -25,8 +25,9 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **Kein Wake-Gate — die Kamera war bereit.** Deep-Dive (btsnoop+APK, 23.08.) korrigiert zwei Fehlschlüsse: `0x2001=0x03` ist **VALID_WAKE** (Wire-Enum STOP=0…VALID_WAKE=3, nicht die Ordinale); und die RFCOMM-Verbindung ging an eine **Samsung-Uhr**, nicht die Kamera. Echte vermutliche Lücken unseres Versuchs: **CCCDs nie gesetzt** (Indicate 2000 / Notify 2008), Establishment nicht in voller In-Session-Kette mit Classic-**Bond**, und nach `0x2005` der WiFi-Direct-**AP-Beitritt** (Creds aus `0x2004`) statt nur scannen. Volle belegte Sequenz: [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md) |
-| **Nächster Schritt** | Client-Flow an [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md) ausrichten: CCCD Indicate 2000 + Notify 2008 → 4-Stufen-Auth → `createBond` (classic 4f:fe) → `0x2004` lesen → `0x2005`=01 → dann WiFi-Direct beitreten (SSID/PW aus `lssec`) → PTP/IP `host:15740`, Live View `0x9201`/`0x9428` |
+| **Erreicht (neu)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die **Kamera öffnet ihren WLAN-AP** (am Display + als `netsh`-SSID bestätigt). Kein RFCOMM, kein `0x2021` |
+| **Offenes Gate** | **Beitritt + Live View.** Der AP ist ein normaler broadcastender WPA2-AP, aber (a) die Hochfahrt ist zwischen Läufen inkonsistent (mal stabil scanbar, mal nie), (b) `remote-start --join` muss zuverlässig auf dem freien Adapter beitreten, (c) danach PTP/IP `host:15740` Live View `0x9201`/`0x9428` |
+| **Nächster Schritt** | AP-Hochfahrt stabilisieren (BLE nach `0x2005` halten? Kanal/Band prüfen) → Beitritt bestätigen (Ping) → PTP/IP anschließen. Werkzeug + belegte Sequenz: `remote-start.py`, [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md) |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +98,40 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — DURCHBRUCH: der korrigierte BLE-Flow fährt den Kamera-AP hoch
+Kommando:   `remote-start.py --register skyshutter --join` (Windows-Python),
+            Sequenz aus [REMOTE_SEQUENCE.md].
+Ergebnis:   Der komplette korrigierte Flow läuft an der Hardware sauber durch:
+            ```
+            classic bond vorhanden
+            BLE connected mtu=515
+            CCCD 2008 (notify) + 2000 (indicate) subscribed
+            Handshake 1-4 (Kamera antwortet per INDICATION auf 2000)
+            0x2001 power = 03  VALID_WAKE  <-- bereit
+            0x2004 gelesen, SSID+Passwort via lssec entschlüsselt
+            0x2005 <- 01 (WiFi) accepted
+            ```
+            **Danach fährt die Kamera ihren WLAN-AP hoch** — vom Nutzer am
+            Display bestätigt (WLAN-Symbol, BT stetig) und einmal auch als
+            broadcastende SSID im `netsh wlan show networks` gesehen
+            (`SSID 4 : P1100_…`, WPA2, kein WiFi-Direct).
+Bedeutung:  **Das Kern-Gate der Session ist geknackt.** Die drei Korrekturen
+            zusammen bringen es: (1) CCCDs (Indicate 2000 / Notify 2008), die wir
+            nie gesetzt hatten; (2) richtige Wake-Deutung (`0x03`=VALID_WAKE,
+            Kamera war immer bereit); (3) voller In-Session-Ablauf mit
+            vorhandenem Classic-Bond. Kein RFCOMM, kein `0x2021`-Wecker.
+Offen:      **Beitritt inkonsistent.** In einem Lauf war der AP die ganze Zeit
+            scanbar+stabil, in einem anderen nie sichtbar → AP-Hochfahrt variiert
+            zwischen Läufen (Ursache offen: BLE-Drop-Timing? Kanal/Band, das der
+            2.-WLAN-Adapter nicht sieht?). `remote-start --join` tritt jetzt auf
+            dem freien Adapter bei (Profil broadcastend), sobald der AP scanbar
+            ist; PTP/IP-Live-View (`host:15740`, `0x9201`/`0x9428`) ist der
+            nächste Schritt, sobald der Beitritt steht.
+Folge:      `remote-start.py` ist der Weg. Nächstes: AP-Hochfahrt stabilisieren
+            (BLE nach `0x2005` halten? Kanal prüfen) und PTP/IP anschließen.
+
+[REMOTE_SEQUENCE.md]: REMOTE_SEQUENCE.md
 
 ### 23.08.2026 — Deep-Dive (12 Agenten): zwei Fehlschlüsse widerlegt, volle Sequenz belegt
 Art:        Multi-Agenten-Analyse (btsnoop + APK, 6 Miner + Synthese + 3
