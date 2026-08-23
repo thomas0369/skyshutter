@@ -247,19 +247,32 @@ def open_hci_user_channel(dev: int) -> socket.socket:
     hcitool and for us alike). The USER channel bypasses kernel and BlueZ
     entirely -- requirement: bluetooth.service must be stopped. As a side
     effect NOTHING else can use the radio while the radar runs: the strongest
-    possible form of "send nothing".
+    possible form of "send nothing". Python's bind() cannot express the HCI
+    channel, so the sockaddr is bound via ctypes.
     """
+    import ctypes
+
+    class SockaddrHci(ctypes.Structure):
+        _fields_ = [
+            ("family", ctypes.c_ushort),
+            ("dev", ctypes.c_ushort),
+            ("channel", ctypes.c_ushort),
+            ("pad", ctypes.c_char * 10),
+        ]
+
     sock = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_RAW, socket.BTPROTO_HCI)
-    try:
-        sock.bind((dev, 1))  # 1 = HCI_CHANNEL_USER
-    except (OSError, TypeError) as exc:
+    libc = ctypes.CDLL(None, use_errno=True)
+    addr = SockaddrHci(socket.AF_BLUETOOTH, dev, 1)  # 1 = HCI_CHANNEL_USER
+    rc = libc.bind(sock.fileno(), ctypes.byref(addr), ctypes.sizeof(addr))
+    if rc != 0:
+        err = ctypes.get_errno()
         sock.close()
         print(
-            f"radar: USER-Kanal fuer hci{dev} nicht verfuegbar ({exc}).\n"
-            "  Bluetooth-Dienst stoppen: sudo systemctl stop bluetooth",
+            f"radar: USER-Kanal fuer hci{dev} nicht verfuegbar (bind errno {err}).\n"
+            "  Bluetooth-Dienst gestoppt? sudo systemctl stop bluetooth",
             file=sys.stderr,
         )
-        raise SystemExit(2) from exc
+        raise SystemExit(2)
     return sock
 
 
