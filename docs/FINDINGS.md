@@ -25,8 +25,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **`0x2001 = INVALID_WAKE`.** Live gemessen (23.08.): die Kamera meldet auf POWER_CONTROL „remote shooting UNAVAILABLE". Die App überspringt bei diesem Wert den `0x2005`-Write ganz. `0x2008` (stand auf OFF, No-Op) und Auth (`0x2005` wird angenommen) sind als Gate ausgeschlossen. `VALID_WAKE` ist ein **Kamerazustand**, kein BLE-Kommando |
-| **Nächster Schritt** | `0x2001` wiederholt lesen, während die Kamera aus dem Menü auf den Aufnahme-Screen wechselt bzw. Fernaufnahme aktiviert wird — herausfinden, welcher Zustand `INVALID_WAKE` → `VALID_WAKE` (0x04) kippt. Erst dann bringt `0x2005` den AP |
+| **Offenes Gate** | **`0x2001 = INVALID_WAKE`.** Die App weckt über `0x2021` RemoteControl (Bytes bekannt: `0500110001`) — aber **`0x2020`/`0x2021` sind nicht im GATT-Baum** dieser Kamera, solange sie im BT-Kopplungsmenü advertisiert. Der Wecker ist so nicht erreichbar. `0x2008`/Auth/Verbunden-sein als Gate ausgeschlossen |
+| **Nächster Schritt** | Klären, welcher **Kamera-Modus** `0x2020/0x2021` freilegt (Wi-Fi-/Fernaufnahme-Menüpunkt statt BT-Kopplung?) — oder Ground Truth: schafft SnapBridge selbst WLAN-Live-View an dieser Kamera? BLE-Rig ist zudem instabil (Handshake bricht bei Stufe 1, `client.pair()` folgenlos) |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,32 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — Vollständige GATT-Liste: `0x2020`/`0x2021` fehlen — der Wecker ist nicht erreichbar
+Kommando:   `client.pair()` + Service-Discovery auf stabiler Verbindung
+            (handshake-frei), Kamera im Verbindungsmenü.
+Ergebnis:   Charakteristiken der Kamera (LSS + Standard):
+            ```
+            2000 2001 2002 2003 2004 2005 2006 2007 2008 2009 200b
+            2080 2082 2083 2084 2086 2087
+            2a00 2a01 2a04 2a05 2a19 2a24 2a26 2a28 2a29 2aa6 2b29 2b2a
+            ```
+Deutung:    **`0x2020` (STATUS_FOR_CONTROL), `0x2021` (CONTROL_POINT_FOR_CONTROL)
+            und `0x2081` (STATUS_FOR_CAPTURE) sind NICHT im GATT-Baum** — auch
+            nach erzwungenem `client.pair()` nicht. Der in der App gefundene
+            Wecker (`startRemoteControl` auf `0x2021`) lässt sich damit auf dieser
+            Kamera/in diesem Zustand nicht senden. `0x2001` bleibt `INVALID_WAKE`.
+            Nebenbefund: `0x2082`–`0x2087` **existieren** (bis auf `0x2085`) —
+            das beantwortet die offene Frage, *dass* es sie gibt (Funktion noch
+            offen). `0x200a` (CABLE_ATTACHMENT) fehlt ebenfalls.
+Interpretation: Die Remote-Control-Charakteristiken erscheinen vermutlich erst,
+            wenn die Kamera in einen **Remote-/Fernaufnahme-Modus** versetzt wird
+            — der aber advertisiert nur im „Mit Smartgerät verbinden"-Menü, wo
+            genau diese Charakteristiken fehlen. Henne-Ei. Offen bleibt, ob ein
+            Kamera-Menüpunkt (Wi-Fi/Fernaufnahme statt BT-Kopplung) die Kamera in
+            einen Zustand bringt, der `0x2020/0x2021` freilegt — oder ob dieser
+            Pfad an diesem Modell so nicht vorgesehen ist. Ground-Truth-Test:
+            schafft SnapBridge selbst WLAN-Live-View an dieser Kamera?
 
 ### 23.08.2026 — Wecker-Kandidat `0x2021` RemoteControl: Bytes bekannt, an der Hardware blockiert
 Art:        Analyse + Hardware-Versuch (mehrere Läufe, Windows-Python).
