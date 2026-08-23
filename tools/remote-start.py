@@ -262,8 +262,11 @@ async def run(args) -> int:
             add_wifi_profile(creds.ssid, creds.password)
 
         log("Stage 4: establishment (WiFi)")
-        await client.write_gatt_char(ESTABLISH, b"\x01", response=True)
-        log("  0x2005 <- 01 (WiFi) accepted")
+        if args.no_establish:
+            log("  uebersprungen (--no-establish, pairing-only wie pair.sh)")
+        else:
+            await client.write_gatt_char(ESTABLISH, b"\x01", response=True)
+            log("  0x2005 <- 01 (WiFi) accepted")
 
         # The AP is likely WiFi-Direct / a hidden SSID (never seen in a plain
         # scan), so don't wait to *see* it -- attempt the join right away, in a
@@ -515,6 +518,11 @@ def main() -> int:
     )
     p.add_argument("--device", help="reconnect with a known client device id (hex)")
     p.add_argument("--nonce", help="reconnect with a known client nonce (hex)")
+    p.add_argument(
+        "--no-establish",
+        action="store_true",
+        help="stop after handshake+register (pairing-only, like pair.sh)",
+    )
     args = p.parse_args()
     return asyncio.run(run(args))
 
