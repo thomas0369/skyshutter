@@ -25,8 +25,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 |---|---|
 | **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. Es hängt am WLAN-Zugang |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Offenes Gate** | **`0x2001 = INVALID_WAKE`.** Die App weckt über `0x2021` RemoteControl (Bytes bekannt: `0500110001`) — aber **`0x2020`/`0x2021` sind nicht im GATT-Baum** dieser Kamera, solange sie im BT-Kopplungsmenü advertisiert. Der Wecker ist so nicht erreichbar. `0x2008`/Auth/Verbunden-sein als Gate ausgeschlossen |
-| **Nächster Schritt** | Klären, welcher **Kamera-Modus** `0x2020/0x2021` freilegt (Wi-Fi-/Fernaufnahme-Menüpunkt statt BT-Kopplung?) — oder Ground Truth: schafft SnapBridge selbst WLAN-Live-View an dieser Kamera? BLE-Rig ist zudem instabil (Handshake bricht bei Stufe 1, `client.pair()` folgenlos) |
+| **Offenes Gate** | **Notification- + Verschlüsselungs-Ablauf fehlt.** Der btsnoop der funktionierenden SnapBridge-Sitzung zeigt: vor dem `0x2005`-Write abonniert die App **Notifications auf 2000 und 2008**, empfängt die Kamera-Notifications und **verschlüsselt den Link** (`SET_CONNECTION_ENCRYPTION`). Unser Client tat beides nie — daher bleibt die Kamera in `INVALID_WAKE`. Der `0x2021`-Wecker ist widerlegt (existiert an diesem Modell nicht) |
+| **Nächster Schritt** | In `ble-probe.py`: CCCD auf 2000 **und** 2008 setzen (Notify an) → Auth → auf Kamera-Notification warten → Link verschlüsseln (`client.pair()`) → `0x2005`. Die echte Sequenz ist mitgeschnitten (btsnoop), nur noch nachzubauen |
 | **Danach** | Sobald der AP steht: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, Live View von „erschlossen" zu „gemessen" |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -97,6 +97,41 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 23.08.2026 — Echte SnapBridge-Sequenz mitgeschnitten: der `0x2021`-Wecker entfällt, es fehlen Notifications + Verschlüsselung
+Kommando:   `adb bugreport` → `btsnoop`/Bluetooth-Stack-Log der **funktionierenden**
+            SnapBridge-Fernaufnahme extrahiert (Android-Stack-Log,
+            Sitzung 16:16–16:18). SnapBridge zeigt an dieser P1100 **echtes
+            WLAN-Live-View** (von Thomas bestätigt).
+Fund 1:     **`0x2020`/`0x2021` existieren auch für die App nicht.** Die von
+            SnapBridge entdeckte LSS-Charakteristikliste ist identisch mit unserer
+            (`2000–2009, 200b, 2080, 2082–2084, 2086, 2087` + Batterie) — keine
+            FOR_CONTROL-Charakteristik. **Der `0x2021`-Wecker (RemoteControl) gilt
+            nicht für dieses Modell** und ist damit widerlegt.
+Fund 2:     Die echte Startsequenz pro Verbindung (Value-Handles → UUID):
+            ```
+            CCCD 0x2000  Notify EIN   (die App abonniert 2000)
+            CCCD 0x2008  Notify EIN   (die App abonniert 2008)
+            0x2000       Auth-Writes (×2 Stufen) — Kamera ANTWORTET per Notification
+            0x2002       Client-Name
+            0x2006       Current Time
+            0x2005       Establishment 01  -> AP startet, WLAN-Symbol erscheint
+            ```
+Fund 3:     Vor dem Establishment fährt der Stack **`SET_CONNECTION_ENCRYPTION`**
+            (`BTM_SetEncryption`, klassischer Link `classic_handle:0x0009`,
+            `new_encr_key_256=true`) — der Link ist **verschlüsselt**.
+Deutung:    Unsere `pairing --establish`-Versuche unterschieden sich in **zwei**
+            Punkten von der App: (a) wir haben **nie Notifications auf 2000/2008
+            aktiviert** und den Notification-Handshake der Kamera nie empfangen;
+            (b) wir hatten den Link **nicht verschlüsselt**. Sehr wahrscheinlich
+            bleibt die Kamera ohne diesen Ablauf in `INVALID_WAKE` und ignoriert
+            den `0x2005`-Write. Kein Wecker-Byte, kein `0x2082/2083`, kein
+            PowerControl-Write nötig — es ist der **Notification+Encryption-
+            Ablauf**, der fehlt.
+Nächster    In `ble-probe.py`/Client: vor dem Establishment CCCD auf 2000 **und**
+Test:       2008 schreiben (Notify an), Auth fahren, auf die Kamera-Notification
+            warten, Link verschlüsseln (`client.pair()` bzw. Classic-Encryption),
+            dann `0x2005`. Ground Truth liegt vor — nur nachbauen.
 
 ### 23.08.2026 — Vollständige GATT-Liste: `0x2020`/`0x2021` fehlen — der Wecker ist nicht erreichbar
 Kommando:   `client.pair()` + Service-Discovery auf stabiler Verbindung
