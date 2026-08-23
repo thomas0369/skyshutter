@@ -168,15 +168,23 @@ async def handshake(client, args):
 
 
 def scan_wifi_for(ssid: str) -> bool:
-    """True if the camera SSID is visible to Windows now."""
-    netsh = r"C:\Windows\System32\netsh.exe"
-    exe = netsh if os.path.exists("/mnt/c/Windows/System32/netsh.exe") else "netsh.exe"
+    """True if the camera SSID is visible to this host now."""
     try:
-        out = subprocess.run(
-            [exe, "wlan", "show", "networks"], capture_output=True, text=True, timeout=20
-        ).stdout
+        if IS_WINDOWS:
+            netsh = r"C:\Windows\System32\netsh.exe"
+            exe = netsh if os.path.exists("/mnt/c/Windows/System32/netsh.exe") else "netsh.exe"
+            out = subprocess.run(
+                [exe, "wlan", "show", "networks"], capture_output=True, text=True, timeout=20
+            ).stdout
+        else:
+            out = subprocess.run(
+                ["nmcli", "-t", "-f", "SSID", "dev", "wifi", "list"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+            ).stdout
     except Exception as exc:
-        log(f"  netsh scan failed: {type(exc).__name__}: {str(exc)[:60]}")
+        log(f"  scan failed: {type(exc).__name__}: {str(exc)[:60]}")
         return False
     return ssid in out
 
