@@ -98,6 +98,26 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 23.08.2026 — Kombinierter Test: LE-`pair()` vor dem Handshake trennt die Kamera (Timing zählt)
+Kommando:   Kombiniertes Skript: BLE verbinden → Notify 2000/2008 → `pair()` →
+            RFCOMM → `0x2001` → `0x2005`.
+Ergebnis:   BLE verband, Notify ging, aber **`client.pair()` (LE) trennte die
+            Verbindung sofort** („Not connected"). Ohne `pair()` verband es
+            erneut, danach aber Connect-Timeouts — `pair()` hinterließ **zwei
+            LE-Bonds `P1100` auf Windows**, die die folgenden Connects störten.
+Nuance:     Das Handy **hat** im btsnoop BLE-Schlüssel für die Kamera (LE-Bond
+            existiert). LE-Pairing ist also Teil des normalen Ablaufs — aber
+            offenbar **zum richtigen Zeitpunkt** (nach dem App-Handshake), nicht
+            davor/willkürlich. Ein erzwungenes `pair()` vor dem Handshake wird
+            von der Kamera mit Trennung quittiert.
+Folge:      `--like-app` ruft **kein** `pair()` mehr auf (nur noch Notify). Die
+            Verschlüsselung/LE-Bindung muss an der richtigen Stelle im Ablauf
+            passieren — noch zu bestimmen. Die kombinierte Orchestrierung
+            (BLE-Notify + RFCOMM + `0x2005`) ist strukturell richtig; Blocker
+            bleiben (a) die BLE-Connect-Zuverlässigkeit des Rigs und (b) das
+            LE-Pair-Timing. Evtl. die doppelten `P1100`-LE-Bonds unter Windows
+            entfernen, bevor es weitergeht.
+
 ### 23.08.2026 — RFCOMM-Richtung geklärt: ausgehender Client zu `5e8945b0…`; Dienst im Ruhezustand nicht angeboten
 Quelle:     btsnoop (`btsock_rfc_connect`) + neues Werkzeug `rfcomm-connect.py`.
 Fund:       Die App ist RFCOMM-**Client**: `btsock_rfc_connect: service_uuid:

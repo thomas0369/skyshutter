@@ -490,11 +490,13 @@ async def _pairing_once(args) -> None:
         log(f"connected  mtu={client.mtu_size}")
 
         if args.like_app:
-            # The vendor app (btsnoop capture, 23.08.) does two things our plain
-            # flow skipped, and the camera stays in INVALID_WAKE without them:
-            # it subscribes to notifications on 0x2000 and 0x2008 *before*
-            # authenticating -- the camera answers the handshake by notification
-            # -- and it encrypts the link. Replicate both here.
+            # The vendor app (btsnoop capture, 23.08.) subscribes to
+            # notifications on 0x2000 and 0x2008 *before* authenticating -- the
+            # camera answers the handshake by notification. Replicate that.
+            # NOTE: do NOT call client.pair() here. The camera does no LE pairing
+            # (it uses the app-level handshake plus the classic bond); a forced
+            # LE pair() drops the link (measured 23.08.). The encryption the app
+            # relies on comes from the classic/RFCOMM side, not LE.
             def _notif(short):
                 def cb(_char, data):
                     print(f"  NOTIFY {short}  {hexdump(bytes(data))}", flush=True)
@@ -506,11 +508,6 @@ async def _pairing_once(args) -> None:
                     print(f"  notify on {short} enabled")
                 except Exception as exc:
                     print(f"  notify {short} failed: {type(exc).__name__}: {str(exc)[:50]}")
-            try:
-                ok = await client.pair()
-                print(f"  pair() -> {ok}")
-            except Exception as exc:
-                print(f"  pair() failed: {type(exc).__name__}: {str(exc)[:50]}")
 
         print(f"  before   {hexdump(bytes(await client.read_gatt_char(AUTH_UUID)))}")
 
@@ -855,7 +852,7 @@ def main() -> None:
     pairing.add_argument(
         "--like-app",
         action="store_true",
-        help="subscribe notify on 2000+2008 and encrypt (pair) before auth, like the app",
+        help="subscribe notify on 2000+2008 before auth, like the app (no LE pair here)",
     )
     pairing.add_argument(
         "--no-connreq-reset",
