@@ -194,7 +194,9 @@ async def run(args) -> int:
         joined = False
         while time.monotonic() < deadline:
             visible = scan_wifi_for(creds.ssid) if creds else False
-            if creds and args.join and visible and try_join(creds.ssid):
+            # The SSID is hidden, so do NOT wait to see it -- try the join every
+            # cycle while the camera holds the AP up.
+            if creds and args.join and try_join(creds.ssid):
                 joined = True
                 gw = wlan_gateway(creds.ssid)
                 log(f"  WLAN verbunden mit {creds.ssid!r}  Kamera-IP≈{gw or '?'}")
@@ -203,9 +205,9 @@ async def run(args) -> int:
                 log(f"  AP sichtbar: {creds.ssid!r}")
                 break
             elapsed = args.hold - (deadline - time.monotonic())
-            log(f"  +{elapsed:.0f}s: AP {'SICHTBAR' if visible else 'nicht sichtbar'}"
-                f"{' (Join-Versuch läuft)' if visible and args.join else ''}")
-            await asyncio.sleep(4.0)
+            log(f"  +{elapsed:.0f}s: SSID {'im Scan' if visible else 'versteckt'}"
+                f"{'; Join-Versuch...' if args.join else ''}")
+            await asyncio.sleep(3.0)
         if not client.is_connected:
             log("  ! BLE getrennt (Kamera schaltet auf Funk um -- kann normal sein)")
 
@@ -248,7 +250,7 @@ def add_wifi_profile(ssid: str, psk: str) -> None:
         '<WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1">\n'
         f"  <name>{ssid}</name>\n"
         f"  <SSIDConfig><SSID><name>{ssid}</name></SSID>"
-        "<nonBroadcast>false</nonBroadcast></SSIDConfig>\n"
+        "<nonBroadcast>true</nonBroadcast></SSIDConfig>\n"
         "  <connectionType>ESS</connectionType><connectionMode>manual</connectionMode>\n"
         "  <MSM><security>\n"
         "    <authEncryption><authentication>WPA2PSK</authentication>"
@@ -273,29 +275,13 @@ def delete_wifi_profile(ssid: str) -> None:
         pass
 
 
-def _free_wlan_interface() -> str | None:
-    """Name of a disconnected WLAN interface. This rig has a Qualcomm DBS chip
-    with two real interfaces, so the free one can join the camera AP while the
-    host keeps its own network on the other. Falls back to None (default adapter)."""
-    out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
-                         capture_output=True, text=True, timeout=15).stdout
-    name = None
-    for line in out.splitlines():
-        s = line.strip()
-        if s.lower().startswith("name"):
-            name = s.split(":", 1)[-1].strip()
-        elif s.lower().startswith(("state", "zustand")) and name:
-            if any(w in s.lower() for w in ("disconnected", "getrennt")):
-                return name
-    return None
-
-
 def try_join(ssid: str) -> bool:
-    cmd = [_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"]
-    iface = _free_wlan_interface()
-    if iface:
-        cmd.append(f"interface={iface}")
-    subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+    # Connect on the default adapter. The camera SSID is hidden (never in a scan),
+    # so a nonBroadcast profile + connect probes for it directly; joining on a
+    # named interface proved unreliable ("interface not present"). This may drop
+    # the host's own WiFi for the duration -- acceptable for a capture session.
+    subprocess.run([_netsh(), "wlan", "connect", f"name={ssid}", f"ssid={ssid}"],
+                   capture_output=True, text=True, timeout=15)
     time.sleep(3)
     out = subprocess.run([_netsh(), "wlan", "show", "interfaces"],
                          capture_output=True, text=True, timeout=15).stdout.lower()
