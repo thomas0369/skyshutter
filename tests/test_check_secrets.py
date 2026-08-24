@@ -19,7 +19,20 @@ def _run() -> subprocess.CompletedProcess:
 def test_guard_passes_on_clean_tree():
     result = _run()
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "sauber" in result.stdout
+    assert "sauber" in result.stdout or "nichts zu pruefen" in result.stdout
+
+
+def test_guard_tolerates_a_missing_pattern_file(tmp_path, monkeypatch):
+    # CI checkouts have no .secret-patterns (gitignored by design) -- a fresh
+    # checkout has no rig secrets, so the guard passes with a notice instead
+    # of failing the build.
+    (REPO / ".secret-patterns").rename(REPO / ".secret-patterns.saved")
+    try:
+        result = _run()
+        assert result.returncode == 0
+        assert "nichts zu pruefen" in result.stdout
+    finally:
+        (REPO / ".secret-patterns.saved").rename(REPO / ".secret-patterns")
 
 
 def test_guard_catches_a_planted_leak(tmp_path):

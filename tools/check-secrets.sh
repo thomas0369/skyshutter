@@ -10,7 +10,13 @@ cd "$(dirname "$0")/.."
 
 PATTERNS_FILE=".secret-patterns"
 TEMPLATE="tools/secret-patterns.example.txt"
-[ -r "$PATTERNS_FILE" ] || { echo "check-secrets: $PATTERNS_FILE fehlt (Vorlage: $TEMPLATE)"; exit 2; }
+# The pattern list is gitignored BY DESIGN (the patterns ARE the secrets).
+# A fresh checkout -- like CI -- simply has no rig secrets to guard; that is
+# not an error. The template documents how to add them locally.
+if [ ! -r "$PATTERNS_FILE" ]; then
+  echo "check-secrets: keine Muster-Datei ($PATTERNS_FILE) -- nichts zu pruefen (Vorlage: $TEMPLATE)"
+  exit 0
+fi
 
 status=0
 while IFS= read -r pat; do
