@@ -23,3 +23,13 @@ measurements/*.bin
 docs/secrets.local.md
 ergebnis.md
 dist/
+
+# deb-Build-Reste (dpkg-buildpackage auf dem Pi)
+.pybuild/
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/python3-skyshutter/
+debian/skyshutter-pi/
+debian/tmp/
+debian/changelog.gz
