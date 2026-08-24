@@ -88,9 +88,12 @@ def run_status() -> int:
     age = time.time() - data.get("ts", 0)
     flags = data.get("flags", {})
     f = " ".join(f"{k}={v}" for k, v in flags.items() if k != "raw") or "keine"
+    rssi = data.get("rssi")
+    # -127 is the HCI "not available" marker, not a real field strength
+    rssi_s = "n/a" if rssi in (None, -127) else str(rssi)
     print(
-        f"camera: gesehen vor {age:.1f}s  rssi={data.get('rssi')}  "
-        f"addr={data.get('addr')}  flags: {f}"
+        f"camera: gesehen vor {age:.1f}s  rssi={rssi_s}  "
+        f"addr={data.get('addr')}  name={data.get('name')}  flags: {f}"
     )
     return 0 if age < STALE_AFTER else 2
 

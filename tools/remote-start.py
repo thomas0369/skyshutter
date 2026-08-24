@@ -223,7 +223,7 @@ async def run(args) -> int:
     await ensure_bond(args.name)
 
     log("Stage 2: BLE connect + handshake")
-    if args.wait_for_ad and not await wait_for_ad(args.timeout):
+    if args.wait_for_ad and not await wait_for_ad(args.ad_wait):
         log("  keine Scanner-Sichtung im Zeitfenster -- Kamera sendet nicht")
         return 2
     device = await find_camera(args.timeout)
@@ -507,6 +507,12 @@ def main() -> int:
     p.add_argument("--name", default="P1100", help="paired-device name substring for bond check")
     p.add_argument("--register", metavar="NAME", help="write this client name to 0x2002")
     p.add_argument("--timeout", type=float, default=25.0, help="BLE scan/connect timeout")
+    p.add_argument(
+        "--ad-wait",
+        type=float,
+        default=300.0,
+        help="seconds to wait for a fresh scanner sighting (ad bursts pause for minutes)",
+    )
     p.add_argument("--hold", type=float, default=60.0, help="seconds to hold BLE + watch the AP")
     p.add_argument("--join", action="store_true", help="also join the AP and open live view")
     p.add_argument(

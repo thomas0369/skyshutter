@@ -66,6 +66,44 @@ def adapter_of(device_path: str) -> str:
     return f"/org/bluez/hci{digits}"
 
 
+def find_adapter(bus: dbus.SystemBus) -> str:
+    om = dbus.Interface(bus.get_object(BLUEZ, "/"), "org.freedesktop.DBus.ObjectManager")
+    for path, ifaces in om.GetManagedObjects().items():
+        if ADAPTER1 in ifaces:
+            return path
+    return "/org/bluez/hci0"
+
+
+def ensure_device(bus: dbus.SystemBus, address: str, wait_seconds: float):
+    """Return the device object, creating it via BlueZ discovery if needed.
+
+    Measured 24.08. evening: `hcitool inq` talks to the kernel directly and
+    never creates a bluetoothd device object -- Pair() then dies as
+    "not found" (rc=2 twice in a row). Discovery through bluetoothd (what
+    `bluetoothctl scan on` does, plain StartDiscovery without a transport
+    filter) creates the object; that path worked every time it was tried.
+    """
+    obj, _dev = find_device(bus, address)
+    if obj is not None:
+        return obj
+    adapter = dbus.Interface(bus.get_object(BLUEZ, find_adapter(bus)), ADAPTER1)
+    print(f"pair: Geraet {address} nicht in BlueZ -- Discovery bis zu {wait_seconds:.0f}s")
+    adapter.StartDiscovery()
+    deadline = time.monotonic() + wait_seconds
+    try:
+        while time.monotonic() < deadline:
+            time.sleep(0.5)
+            obj, _dev = find_device(bus, address)
+            if obj is not None:
+                return obj
+    finally:
+        try:
+            adapter.StopDiscovery()
+        except dbus.exceptions.DBusException:
+            pass
+    return None
+
+
 def pair_call(obj, timeout: int) -> None:
     """One Device1.Pair() call; raises dbus.exceptions.DBusException on failure."""
     iface = dbus.Interface(obj, DEVICE1)
@@ -90,7 +128,8 @@ def fallback_rediscover_and_pair(
         print(f"fallback: Adresse {address} unbekannt, Inquiry laeuft ...")
 
     adapter = dbus.Interface(bus.get_object(BLUEZ, hci), ADAPTER1)
-    adapter.SetDiscoveryFilter({"Transport": dbus.String("bredr")})
+    # No transport filter: plain discovery is the measured-working path
+    # (24.08. evening); a bredr-only filter rediscovered nothing.
     adapter.StartDiscovery()
     fresh = None
     deadline = time.monotonic() + wait_seconds
@@ -127,9 +166,19 @@ def main() -> int:
         action="store_true",
         help="skip the rediscover+pair fallback after the retry loop",
     )
+    p.add_argument(
+        "--discover",
+        type=float,
+        default=30.0,
+        help="seconds of BlueZ discovery to create a missing device object",
+    )
     args = p.parse_args()
 
     bus = dbus.SystemBus()
+    obj = ensure_device(bus, args.address, args.discover)
+    if obj is None:
+        print(f"pair: Geraet {args.address} nicht gefunden (Discovery {args.discover:.0f}s leer)")
+        return 2
     obj, dev = find_device(bus, args.address)
     if obj is None or dev is None:
         print(f"pair: Geraet {args.address} nicht gefunden (Scan laufen lassen)")

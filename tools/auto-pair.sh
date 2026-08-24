@@ -72,7 +72,9 @@ while true; do
         echo "$L" | grep -qi "080620" && echo "$L" >> /tmp/inquiry_hits.txt
       done ) &
     INQPID=$!
-    timeout 90 .venv/bin/python tools/remote-start.py --register skyshutter \
+    # --ad-wait rides out the camera's advertising burst pauses (measured
+    # 287 s and 1071 s, 24.08. evening) -- the old 90 s wrapper gave up mid-pause
+    timeout 400 .venv/bin/python tools/remote-start.py --register skyshutter \
         --hold 0 --wait-for-ad --no-establish > "$RSLOG" 2>&1
     if ! grep -q "registered as" "$RSLOG"; then
         log "  kein auth/registry"
