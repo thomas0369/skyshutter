@@ -100,6 +100,41 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 24.08.2026 (Abend) — Durchbruch am Agent, aber Burst verpasst: Skill-Review der Pairing-Kette
+Aufbau:     Live-Session mit bluetoothd-Debug-Log + btmon. Assumption-Table-
+            Review (diagnose-Skill) über alle Pairing-Scripts nach den
+            Messungen der Abendrunde.
+Belegt:     - **ROOT CAUSE Agent (behoben)**: bt-agent.py deklarierte seine
+              Methoden unter `org.bluez.AgentManager1` statt `org.bluez.Agent1`.
+              bluetoothd rief korrekt (`Calling Agent.RequestConfirmation …
+              passkey=647189`), bekam `UnknownMethod` → wertete als Ablehnung
+              → `AuthenticationFailed` in ~2 ms. Seit Fix: `CONFIRM
+              passkey=320131 -> yes` im Journal, **Code 320131 erschien am
+              Kamera-Display** (Thomas bestätigt; Abbruch versehentlich).
+              Kamera sendet Codes zuverlässig — sie wartete auf unser OK.
+            - **Nebenbefund**: `wf-panel-pi` (Raspberry-Desktop-Panel)
+              registriert bei bluetoothd-Start einen Agenten `/btagent` als
+              Default. NOT the root cause (unser Fehler reichte), aber ein
+              Konkurrent um die Default-Agent-Rolle; unser Agent holt sie
+              sich per RequestDefaultAgent zurück. Im Kopf behalten, falls
+              Pairing wieder "sofort scheitert".
+            - **Burst-Verhalten quantifiziert** (ble-watch-Journal): AD-Phase
+              21:05:39–21:06:13 (34 s), Pause davor 1071 s, eine weitere
+              287 s. 25-s-Wartefenster sind damit Münzwurf.
+            - **hcitool inq legt KEINE BlueZ-Device-Objekte an** (rc=2 bei
+              bt-pair zweimal) — nur bluez-Discovery (`bluetoothctl scan on`
+              bzw. Adapter1.StartDiscovery) legt sie an.
+            - **rssi=-127** ist der HCI-Marker „nicht verfügbar", kein
+              Empfangswert; Identität der Sichtung via `name` Feld
+              verifizierbar (P1100_<serno>).
+Fixes:      bt-pair (ensure_device per BlueZ-Discovery, kein bredr-Filter im
+            Fallback), remote-start (`--ad-wait` 300 s, entkoppelt vom
+            Connect-Timeout), ble-watch (-127 → n/a, name in Status),
+            auto-pair (400 s Wrapper). Alles deployed (Commits 2552123,
+            Agent-Fix früher).
+Offen:      Ein sauberer Lauf mit OK am Display — Kette ist beweisbar komplett
+            (Handshake → Code am Display → Agent bestätigt).
+
 ### 24.08.2026 (Nacht III) — Kamera kooperiert: Paging beantwortet, dann 3× AuthenticationFailed
 Aufbau:     Korrigierter Lauf-Block (Vorchecks + Handshake-Gate): Sichtung
             frisch (rssi −70, neue RPA 58:27:6F:4F:39:20), Handshake OK
