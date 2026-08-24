@@ -69,9 +69,32 @@ def main() -> None:
     bus = dbus.SystemBus()
     AutoConfirmAgent(bus, AGENT_PATH)
     mgr = dbus.Interface(bus.get_object("org.bluez", "/org/bluez"), "org.bluez.AgentManager1")
-    mgr.RegisterAgent(AGENT_PATH, "DisplayYesNo")
-    mgr.RequestDefaultAgent(AGENT_PATH)
-    print("AGENT_BEREIT (DisplayYesNo, auto-confirm)", flush=True)
+
+    def register() -> None:
+        mgr.RegisterAgent(AGENT_PATH, "DisplayYesNo")
+        mgr.RequestDefaultAgent(AGENT_PATH)
+        print("AGENT_BEREIT (DisplayYesNo, auto-confirm)", flush=True)
+
+    def bluez_back(name, old_owner, new_owner):
+        # bluetoothd restarted: agent registrations live inside the bluetoothd
+        # process, so ours died with it. Without re-registering, Pair() runs
+        # agent-less and the SSP exchange dies as AuthenticationFailed while
+        # the running agent process looks perfectly healthy (measured 24.08.,
+        # FINDINGS "Nacht III"). Re-register the moment bluez returns.
+        if new_owner:
+            try:
+                register()
+                print("AGENT_NEU_REGISTRIERT (bluetoothd war neu gestartet)", flush=True)
+            except dbus.DBusException as exc:
+                print(f"Re-Register fehlgeschlagen: {exc}", flush=True)
+
+    bus.add_signal_receiver(
+        bluez_back,
+        signal_name="NameOwnerChanged",
+        dbus_interface="org.freedesktop.DBus",
+        arg0="org.bluez",
+    )
+    register()
     GLib.MainLoop().run()
 
 
