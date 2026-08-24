@@ -33,3 +33,5 @@ debian/python3-skyshutter/
 debian/skyshutter-pi/
 debian/tmp/
 debian/changelog.gz
+
+.secret-patterns

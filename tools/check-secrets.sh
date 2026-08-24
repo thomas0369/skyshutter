@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
 # check-secrets: fail if tracked content carries real rig identifiers.
 #
-# The measured values (AP SSID with serial derivative, AP PSK, rig MACs)
-# live in docs/secrets.local.md -- gitignored, like *.pcap. This guard is
-# the net that catches a slip BEFORE it is committed or pushed (release
-# plan R5). Exit 0 = clean, 1 = leak found (paths printed).
+# The pattern list lives in .secret-patterns (gitignored -- the patterns ARE
+# the secrets, so they must never be committed; the committed template
+# tools/secret-patterns.example.txt documents the format). The measured
+# values also live in docs/secrets.local.md. Exit 0 = clean, 1 = leak.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-PATTERNS_FILE="tools/secret-patterns.txt"
-[ -r "$PATTERNS_FILE" ] || { echo "check-secrets: $PATTERNS_FILE fehlt"; exit 2; }
+PATTERNS_FILE=".secret-patterns"
+TEMPLATE="tools/secret-patterns.example.txt"
+[ -r "$PATTERNS_FILE" ] || { echo "check-secrets: $PATTERNS_FILE fehlt (Vorlage: $TEMPLATE)"; exit 2; }
 
 status=0
 while IFS= read -r pat; do
   case "$pat" in ""|\#*) continue ;; esac
-  hits=$(git grep -n -I -e "$pat" -- ':!docs/release-plan.md' ':!tools/secret-patterns.txt' 2>/dev/null)
+  hits=$(git grep -n -I -e "$pat" 2>/dev/null)
   if [ -n "$hits" ]; then
-    echo "LECK für Muster '$pat':"
+    echo "LECK fuer Muster '$pat':"
     echo "$hits"
     status=1
   fi

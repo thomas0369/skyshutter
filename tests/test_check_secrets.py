@@ -27,7 +27,7 @@ def test_guard_catches_a_planted_leak(tmp_path):
     marker = REPO / "tests" / "_leak_probe.txt"
     pattern = next(
         line.strip()
-        for line in (REPO / "tools" / "secret-patterns.txt").read_text().splitlines()
+        for line in (REPO / ".secret-patterns").read_text().splitlines()
         if line.strip() and not line.startswith("#")
     )
     marker.write_text(f"probe {pattern}\n")

@@ -20,7 +20,7 @@ Gates: **R** (Recht) → **H** (Hygiene) → **P** (Packaging) → **S** (Ship).
 
 ## M1 — Rechtssicherheit (Gate R)
 
-- **R1 Schwärzen in HEAD.** `<AP-PSK>` → `<AP-PSK>`, `P1100_<serno>` →
+- **R1 Schwärzen in HEAD.** `<AP-PSK>` → `<AP-PSK>`, `<AP-SSID>` →
   `P1100_<serno>` in FINDINGS.md/tests/. Tests auf generische Fixtures
   (`P1100_SN1234`) umstellen. Echte Werte → `docs/secrets.local.md`
   (gitignored, wie `*.pcap`).
