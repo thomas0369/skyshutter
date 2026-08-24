@@ -25,41 +25,41 @@ AGENT_PATH = "/skyshutter/agent"
 
 
 class AutoConfirmAgent(dbus.service.Object):
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
     def Release(self) -> None:  # noqa: N802 (bluez API name)
         pass
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="os", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def AuthorizeService(self, device, uuid) -> None:  # noqa: N802
         print(f"AuthorizeService {uuid} -> yes", flush=True)
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="o", out_signature="s")
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="s")
     def RequestPinCode(self, device) -> str:  # noqa: N802
         print("RequestPinCode -> 0000", flush=True)
         return "0000"
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="o", out_signature="u")
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="u")
     def RequestPasskey(self, device) -> int:  # noqa: N802
         print("RequestPasskey -> 0", flush=True)
         return 0
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="ou", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
     def DisplayPasskey(self, device, passkey) -> None:  # noqa: N802
         print(f"DisplayPasskey {passkey}", flush=True)
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="os", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="os", out_signature="")
     def DisplayPinCode(self, device, pin) -> None:  # noqa: N802
         print(f"DisplayPinCode {pin}", flush=True)
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="ou", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="ou", out_signature="")
     def RequestConfirmation(self, device, passkey) -> None:  # noqa: N802
         print(f"CONFIRM passkey={passkey} -> yes", flush=True)
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="o", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="o", out_signature="")
     def RequestAuthorization(self, device) -> None:  # noqa: N802
         print("RequestAuthorization -> yes", flush=True)
 
-    @dbus.service.method("org.bluez.AgentManager1", in_signature="", out_signature="")
+    @dbus.service.method("org.bluez.Agent1", in_signature="", out_signature="")
     def Cancel(self) -> None:  # noqa: N802
         print("Cancel", flush=True)
 
