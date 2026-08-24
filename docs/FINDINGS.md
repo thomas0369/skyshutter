@@ -28,11 +28,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert (BlueZ-Bond via bluetoothctl, nmcli-Join auf wlan0) und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang: WAN→Heimnetz (192.168.1.143), LAN→Raspberry (192.168.3.178 per DHCP), Port-Forward 2222→Raspberry:22; alter camjoin/procd-Watcher entfernt, repeater-uci P1100-Eintrag gelöscht, defekter GL-VPN-Firewall-Include deaktiviert (fw4-Reset lädt jetzt sauber). |
 | **Offenes Gate** | **Classic-Bond am Raspberry.** Die Kette ist gemessen intakt (btmon: Connect + SSP-Handshake; Code 240078 erschien am Display, 24.08. 01:11) — die Kamera verweigert nach zu vielen Versuchen (Falle 5a). bt-pair.py jetzt 1:1 zur Windows-Referenz: Retry-Loop (3×, 2 s Pause) + Fallback (RemoveDevice → Inquiry → Pair). Agent braucht DisplayYesNo (steht, läuft). Danach: `remote-start --join --hold` → nmcli-Join auf wlan0 → `liveview --host 192.168.0.10` — alles vorbereitet. |
-| **Nächster Schritt** | 6 h Funkruhe ab 02:02 (Falle 5a; 02:02: ohne Handshake 3× Page Timeout, Kamera advertised nicht — Messung oben). Danach: 1) Kamera-Geräteliste leeren (analog Windows-Stale-Bond-Falle, sonst öffnet sie die Classic-Seite nicht). 2) Vorchecks: ble-watch aktiv + Sichtung frisch (exit 0). 3) EIN Lauf MIT Gate: Pairing nur nach „registered as" im Handshake-Log. Bei BOND_OK: `remote-start --join --hold`. Danach: AZ-GTi anbinden (FTDI bevorzugt; SSID+PSK vom Mount-Display ablesen). |
+| **Nächster Schritt** | Nacht III: Kamera kooperiert (Paging beantwortet nach Handshake OK), 3× AuthenticationFailed. Diagnose: `journalctl --user -u pair-agent` — CONFIRM-Zeilen? Zweig A: Display beobachten, OK im 25-s-Fenster drücken, ggf. Kamera-Geräteliste leeren. Zweig B: `systemctl --user restart pair-agent`, EIN gated Versuch. Danach: AZ-GTi anbinden (FTDI bevorzugt; SSID+PSK vom Mount-Display ablesen). |
 | **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-24 (02:02) |
+| **Stand vom** | 2026-08-24 (Nacht III) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -99,6 +99,40 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 24.08.2026 (Nacht III) — Kamera kooperiert: Paging beantwortet, dann 3× AuthenticationFailed
+Aufbau:     Korrigierter Lauf-Block (Vorchecks + Handshake-Gate): Sichtung
+            frisch (rssi −70, neue RPA 58:27:6F:4F:39:20), Handshake OK
+            („registered as"), Inquiry-Treffer 7C:B8:DA:A6:4F:FE, danach
+            3× `bt-pair.py` → je `org.bluez.Error.AuthenticationFailed`.
+Belegt:     - **Die Kamera ist bereit und kooperiert**: Gegenüber 02:02
+              (Page Timeout — keine Funkantwort) hat sie das Paging jetzt
+              beantwortet und den SSP-Ablauf begonnen. Radiokette und
+              Bereitschaft stehen; das Scheitern liegt NACH dem Verbindungsauf-
+              bau, in der Authentifizierung.
+            - `AuthenticationFailed` = eine der beiden Seiten hat die SSP-
+              Bestätigung verweigert oder nicht rechtzeitig gegeben (gleiche
+              Fehlerklasse wie der bluetoothctl-Auto-Decline, Nacht II).
+            - **Zwei Zweige, durch das pair-agent-Journal trennbar:**
+              (A) `CONFIRM passkey=…`-Zeilen während der Versuche → unsere
+              Seite bestätigte automatisch; die Kamera-Seite lehnte ab oder
+              OK wurde im ~25-s-Fenster nicht gedrückt → Display beobachten,
+              ggf. Kamera-Geräteliste leeren.
+              (B) KEINE CONFIRM-Zeilen → der Agent wurde nie gefragt:
+              Agent-Registrierung verloren (bluetoothd-Restart räumt
+              Registrierungen — BlueZ-Standardverhalten, hier noch nicht
+              direkt gemessen) → `Pair()` lief agent-los → plausibel
+              IO-Capability-Downgrade auf Just Works ohne Code am Display
+              (analog der gemessenen NoInputNoOutput-Falle 23.08., für den
+              Agent-los-Fall ungemessen) → Kamera lehnt ab.
+            - bt-agent.py jetzt selbstheilend: Re-Register bei
+              NameOwnerChanged(org.bluez) — wirkt nach dem späteren Deploy.
+Offen:      Erschien beim Lauf ein Code am Kamera-Display? (Thomas) Und:
+            wie lange dauerte jeder AuthenticationFailed — sofort (~2 s,
+              spricht für B) oder nach ~25 s (spricht für A)? Alte
+              bt-pair.py-Version druckt keine Zeitstempel.
+Folgt:      Journal-Diagnose → Zweig-Fix → EIN gated Versuch mit
+            Display-Beobachtung.
 
 ### 24.08.2026 (02:02) — Ohne vorangegangenen Handshake: 3× Page Timeout; Kamera advertised nicht
 Aufbau:     Manueller Lauf-Block auf dem Raspberry (Inquiry-Listener parallel,
