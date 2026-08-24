@@ -93,11 +93,9 @@ async def ensure_bond(name_hint: str) -> None:
         if "Paired: yes" in out:
             log(f"  classic bond vorhanden: {CAMERA_CLASSIC_MAC}")
             return
-        log("  kein classic Bond -- einmalig ausfuehren (Kamera in Kopplungsbereitschaft):")
-        log(
-            f"    bluetoothctl: remove {CAMERA_CLASSIC_MAC}; pair {CAMERA_CLASSIC_MAC};"
-            f" trust {CAMERA_CLASSIC_MAC}"
-        )
+        log("  kein classic Bond -- Pairing NUR im Fenster nach LE-Handshake (Messung 02:02):")
+        log("    python3 tools/bt-pair.py <classic-addr aus Inquiry, Klasse 080620>")
+        log("    (NICHT bluetoothctl pair: dessen Session-Agent lehnt SSP in ~2 ms ab, 24.08.)")
         log("  (fahre trotzdem fort; die Kamera ignoriert 0x2005 evtl. ohne Bond)")
         return
     try:
