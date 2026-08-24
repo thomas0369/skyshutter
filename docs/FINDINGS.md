@@ -64,7 +64,11 @@ oft mehr wert als die Frage.
       **nicht kennt** — nur an der Kamera selbst zu erschließen.
 - [ ] Was sind die Properties `D303`, `D406`, `D407`? Ebenfalls in der App
       nicht auffindbar.
-- [ ] Stimmt die CCCD-Ableitung (Value-Handle + 1)?
+- [x] Stimmt die CCCD-Ableitung (Value-Handle + 1)? **JA** — am 22.08. direkt
+      am GATT-Baum der Kamera bestätigt: die vier Deskriptoren sitzen bei
+      0x002c/0x003d/0x004c/0x0051, je +1 über dem Value-Handle (belegt in
+      `src/skyshutter/ble.py` Docstring `cccd_handle`, referenz.md Abschnitt 1).
+      Abgehakt 24.08. (Deep-Dive).
 - [ ] Ist dieses Modell ML-L7-kompatibel? Die Feature-Bits sprechen dagegen
       (Kamerasteuerung über BLE ist abgeschaltet).
 
