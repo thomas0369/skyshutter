@@ -23,16 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | 1 abgeschlossen — PTP bestätigt, Live View existiert, Verschlüsselung geknackt. WLAN-Beitritt: Architektur-Wechsel auf Raspberry als Funk-Zentrale |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · Kopplung reproduzierbar (40 s) · USB-Transport · Hersteller-App analysiert · **LsSec geknackt**, `skyshutter wifi` gewinnt SSID+Passwort aus der Kopplung |
-| **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
-| **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert (BlueZ-Bond via bluetoothctl, nmcli-Join auf wlan0) und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang: WAN→Heimnetz (192.168.1.143), LAN→Raspberry (192.168.3.178 per DHCP), Port-Forward 2222→Raspberry:22; alter camjoin/procd-Watcher entfernt, repeater-uci P1100-Eintrag gelöscht, defekter GL-VPN-Firewall-Include deaktiviert (fw4-Reset lädt jetzt sauber). |
-| **Offenes Gate** | **Classic-Bond am Raspberry.** Die Kette ist gemessen intakt (btmon: Connect + SSP-Handshake; Code 240078 erschien am Display, 24.08. 01:11) — die Kamera verweigert nach zu vielen Versuchen (Falle 5a). bt-pair.py jetzt 1:1 zur Windows-Referenz: Retry-Loop (3×, 2 s Pause) + Fallback (RemoveDevice → Inquiry → Pair). Agent braucht DisplayYesNo (steht, läuft). Danach: `remote-start --join --hold` → nmcli-Join auf wlan0 → `liveview --host 192.168.0.10` — alles vorbereitet. |
-| **Nächster Schritt** | Kette beweisbar komplett bis auf das OK am Display (Agent-Root-Cause gefixt, CONFIRM + Code 320131 gemessen; Scripts gehärtet: Agent1-Regressionstest, bt-pair ensure_device + Zeitstempel + ad-wait 300 s, auto-pair 5a-Mathematik 2×4=8). **Ein sauberer Lauf**: Thomas Menü offen → gated Sequenz → Code → Thomas OK → BOND_OK. Danach bluetoothd-Debug-Override entfernen, `--join` → liveview, auto-pair automatisch. Danach: AZ-GTi anbinden (FTDI bevorzugt; SSID+PSK vom Mount-Display ablesen). |
+| **Phase** | 2 erreicht — **Live View auf dem Raspberry läuft** (Bond → AP → PTP/IP → JPEG-Frames, 24.08. 21:46, Beweis `docs/proof/`) |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** (21:28, `passkey=53437`) · **0x2005-WiFi-Start akzeptiert** (offene Frage 1 beantwortet) · **AP-Join** (polkit-Fix, ~30 s) · **Live-View-Frames über PTP/IP 15740** (offene Frage 2 beantwortet; Kamera-IP 192.168.0.10) |
+| **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
+| **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22). |
+| **Offenes Gate** | keines im Basissystem. Betriebs-Feinschliff: ThoTiTiMe-autoconnect-Ausnahme gilt noch (Pi-seitig), bluetoothd-Debug-Override (`-d`) noch aktiv — beides kosmetisch. |
+| **Nächster Schritt** | 1) Cleanup: Debug-Override entfernen, ThoTiTiMe-autoconnect-Strategie entscheiden (Kamera-AP-Priorität). 2) `auto-pair.sh` im Alltag beweisen (Bond rosten lassen? nein — Bond hält). 3) Fernsteuer-Liste ([referenz.md](referenz.md)) an der Hardware durchmessen — Zoom, Belichtung. 4) CV-Pipeline (astro-cv-tracker + Hailo) auf den Live-Stream. Danach: AZ-GTi anbinden (FTDI bevorzugt; SSID+PSK vom Mount-Display ablesen). |
 | **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-24 (Nacht III) |
+| **Stand vom** | 2026-08-24 (21:46 — Live View läuft) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -47,10 +47,11 @@ oft mehr wert als die Frage.
 
 ### Offen
 
-- [ ] **Startet `0x01` auf `0x2005` den Access Point?** Der Befehl ist aus dem
-      Herstellercode belegt, die Wirkung ungemessen. Das aktuelle Gate.
-- [ ] Antwortet die Kamera im WLAN-Modus auf TCP 15740? Der Port steht im
-      Herstellercode, die Kamera hat ihn noch nie für uns geöffnet.
+- [x] **Startet `0x01` auf `0x2005` den Access Point?** **JA** — mit
+      vorhandenem Classic-Bond akzeptiert (24.08. 21:29, „accepted“), AP
+      broadcastet nach ~80 s. Beantwortet 24.08.
+- [x] Antwortet die Kamera im WLAN-Modus auf TCP 15740? **JA** — PTP/IP-
+      Verbindung + Live-View-Frames (24.08. 21:46, `docs/proof/`).
 - [ ] Wird eine beliebige GUID akzeptiert? Die App benutzt für alle
       Installationen dieselbe, was dagegen spricht, dass die Kamera darüber
       unterscheidet.
@@ -99,6 +100,40 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 24.08.2026 (21:28–21:46) — DURCHBRUCH: BOND_OK → Live View auf dem Raspberry
+Aufbau:     Live-Session. Gated Sequenz (Handshake → Inquiry → bt-pair mit
+            gefixtem Agent), danach `--join` + Liveview. Beweisbilder:
+            `docs/proof/lv_00.jpg` … `lv_02.jpg`.
+Belegt:     - **BOND_OK 21:28:57**: `CONFIRM passkey=53437 -> yes` (Agent),
+              Thomas OK am Display; `Paired: yes`, `Bonded: yes`, Trusted
+              gesetzt. Erster Classic-Bond am Raspberry — nach dem
+              Agent1-Interface-Fix (Abend-Messung) lief die Kette beim
+              ersten sauberen Versuch durch.
+            - **0x2005 ← 01 accepted** (21:29:32, 21:32:45, 21:42:xx):
+              Offene Frage Nr. 1 beantwortet — der WLAN-Start-Befehl wird
+              mit vorhandenem Bond akzeptiert und der AP hochgefahren.
+            - **AP-Verhalten**: Broadcastet nach ~80 s (vorher nur
+              gerichtete Probes); SSID P1100_<serno>, Passwort <AP-PSK>
+              (0x2004, heute stabil über Sessions), Kamera-IP **192.168.0.10**
+              (Gateway-Annahme .1 falsch), Ping erreichbar.
+            - **Join-Falle 1 — polkit**: `nmcli connection add/up` als User
+              thomas → „Not authorized to control networking" (NM-Journal),
+              jeder Join-Versuch lief still ins Leere. Fix:
+              `/etc/polkit-1/rules.d/40-skyshutter-network.rules` (Gruppe
+              netdev → NetworkManager-Actions YES). Danach Join in ~30 s.
+            - **Join-Falle 2 — autoconnect**: Der temporäre Join erzeugt
+              kein Profil; NM zieht wlan0 sofort zu ThoTiTiMe zurück →
+              PTP/IP-Connect timeout. Fix: ThoTiTiMe `connection.autoconnect
+              no` (Pi-seitig; ssh läuft über eth0/Mango-LAN, unkritisch).
+            - **PTP/IP + Live View**: `liveview.py --host 192.168.0.10` —
+              TCP 15740 offen (offene Frage Nr. 2 beantwortet),
+              StartLiveView 0x9201, 3 JPEG-Frames à ~62 kB nach
+              `/tmp/lv_0*.jpg`. Erste echte Kamerabilder über den
+              Raspberry-Stack.
+Ursachen-    Drei Nächte Agent1-Tippfehler (Registrierung ≠ Erreichbarkeit),
+kette:       dann polkit, dann autoconnect — jede Falle einzeln gemessen
+             und beseitigt; die Kamera kooperierte die ganze Zeit.
 
 ### 24.08.2026 (Abend) — Durchbruch am Agent, aber Burst verpasst: Skill-Review der Pairing-Kette
 Aufbau:     Live-Session mit bluetoothd-Debug-Log + btmon. Assumption-Table-
