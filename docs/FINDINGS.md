@@ -28,11 +28,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCDs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert (BlueZ-Bond via bluetoothctl, nmcli-Join auf wlan0) und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang: WAN→Heimnetz (192.168.1.143), LAN→Raspberry (192.168.3.178 per DHCP), Port-Forward 2222→Raspberry:22; alter camjoin/procd-Watcher entfernt, repeater-uci P1100-Eintrag gelöscht, defekter GL-VPN-Firewall-Include deaktiviert (fw4-Reset lädt jetzt sauber). |
 | **Offenes Gate** | **Classic-Bond am Raspberry.** Die Kette ist gemessen intakt (btmon: Connect + SSP-Handshake; Code 240078 erschien am Display, 24.08. 01:11) — die Kamera verweigert nach zu vielen Versuchen (Falle 5a). bt-pair.py jetzt 1:1 zur Windows-Referenz: Retry-Loop (3×, 2 s Pause) + Fallback (RemoveDevice → Inquiry → Pair). Agent braucht DisplayYesNo (steht, läuft). Danach: `remote-start --join --hold` → nmcli-Join auf wlan0 → `liveview --host 192.168.0.10` — alles vorbereitet. |
-| **Nächster Schritt** | 1) Funk-Reset des Raspberry-Stacks (hci0 down/up + bluetooth restart — entspricht Windows' pair.sh). 2) Thomas: Verbindungsmenü öffnen, frische Sichtung abwarten (`ble-watch.py status`). 3) EIN sauberer Lauf: Handshake → trennen → `hcitool inq` (Klasse 080620) → `bt-pair.py` (jetzt mit Retry+Fallback) → Thomas OK am Display → BOND_OK. Bei Verweigerung: 6 h Funkruhe (bt-listen an), morgen ein Versuch. Danach: AZ-GTi anbinden (FTDI bevorzugt; WLAN-Fallback braucht SSID+PSK vom Mount — Thomas muss die ablesen, stehen nirgends dokumentiert). |
+| **Nächster Schritt** | 6 h Funkruhe ab 02:02 (Falle 5a; 02:02: ohne Handshake 3× Page Timeout, Kamera advertised nicht — Messung oben). Danach: 1) Kamera-Geräteliste leeren (analog Windows-Stale-Bond-Falle, sonst öffnet sie die Classic-Seite nicht). 2) Vorchecks: ble-watch aktiv + Sichtung frisch (exit 0). 3) EIN Lauf MIT Gate: Pairing nur nach „registered as" im Handshake-Log. Bei BOND_OK: `remote-start --join --hold`. Danach: AZ-GTi anbinden (FTDI bevorzugt; SSID+PSK vom Mount-Display ablesen). |
 | **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-24 (Nacht II) |
+| **Stand vom** | 2026-08-24 (02:02) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -99,6 +99,38 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 24.08.2026 (02:02) — Ohne vorangegangenen Handshake: 3× Page Timeout; Kamera advertised nicht
+Aufbau:     Manueller Lauf-Block auf dem Raspberry (Inquiry-Listener parallel,
+            `remote-start --register --wait-for-ad --no-establish`, danach
+            3× `bt-pair.py` auf die Inquiry-Adresse), ausgeführt 02:02.
+Belegt:     - **Die Kamera advertised nicht**: `--wait-for-ad` lief 25 s leer
+              („keine Scanner-Sichtung im Zeitfenster -- Kamera sendet
+              nicht"). Der LE-Handshake lief also NIE. Auch nach dem früheren
+              Neustart keine Sichtung — konsistent mit Falle-5a-Nachwirkung.
+            - **Trotzdem inquiry-sichtbar**: Der Listener traf
+              7C:B8:DA:A6:4F:FE (Klasse 080620). Inquiry-Sichtbarkeit ≠
+              Pairing-Bereitschaft — die Kamera antwortet auf Inquiry, aber
+              nicht auf Paging.
+            - **3× `org.bluez.Error.ConnectionAttemptFailed: Page Timeout`**:
+              Die Kamera hat auf Paging nicht einmal auf Radiopbene
+              geantwortet. Kein Agent-, D-Bus- oder bluetoothctl-Problem —
+              die Anfrage kam schlicht nie an.
+            - **Kontrast 01:11 vs. 02:02**: Der einzige Lauf, bei dem der
+              Code erschien (01:11, `240078`), hatte einen erfolgreichen
+              Handshake davor; 02:02 lief keiner → Page Timeout. Einziger
+              struktureller Unterschied: der vorausgegangene LE-Handshake
+              (Classic-Pairing-Fenster öffnet sich nur Sekunden danach,
+              Messung 00:53). Konfound: 5a-Erschöpfung ~1 h nach den letzten
+              von vielen Versuchen.
+            - **Lücke im manuellen Lauf-Block**: Er paarte ohne Gate auf
+              Handshake-Erfolg (auto-pair.sh hat das Gate: „registered as").
+              Korrigierter Block mit Vorchecks und Gate übergeben; Hinweistext
+              in remote-start.py von bluetoothctl auf bt-pair.py umgestellt.
+Folgt:      6 h Funkruhe ab 02:02 (Falle 5a). Danach: Kamera-Geräteliste
+            leeren (analog der Windows-Stale-Bond-Falle), Vorchecks (ble-watch
+            aktiv + Sichtung frisch), EIN Lauf mit Gate. Frische Kamera MIT
+            Handshake trennt die Konfounder.
 
 ### 24.08.2026 (Nacht II) — Kette funktioniert: Code erschien am Display; bt-pair.py jetzt 1:1 zur Windows-Referenz
 Aufbau:     btmon-Mitschnitt während der Pairing-Versuche; danach Analyse der
