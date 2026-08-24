@@ -53,8 +53,10 @@ while true; do
 
     NOW=$(date +%s)
     if [ $((NOW - LASTTRY)) -lt 10 ]; then sleep 10; continue; fi
-    if [ "$FAILS" -ge 3 ]; then
-        log "Falle-5a-Ruhe: 3 Fehlversuche -> 6 h Pause (pairing.md)"
+    if [ "$FAILS" -ge 2 ]; then
+        # 2 cycles x bt-pair (3 attempts + fallback = 4 requests) = 8 pairing
+        # requests -- safely under the ~10 that trigger the camera's sulk mode
+        log "Falle-5a-Ruhe: 2 Fehlzyklen (= 8 Pairing-Requests) -> 6 h Pause (pairing.md)"
         sleep 21600
         FAILS=0
     fi
@@ -116,6 +118,6 @@ while true; do
         FAILS=0
     else
         FAILS=$((FAILS + 1))
-        log "  Pair fehlgeschlagen (Versuch $FAILS/3)"
+        log "  Pair fehlgeschlagen (Zyklus $FAILS/2)"
     fi
 done

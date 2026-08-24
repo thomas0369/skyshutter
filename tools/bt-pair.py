@@ -189,13 +189,20 @@ def main() -> int:
 
     for attempt in range(1, args.attempts + 1):
         print(
-            f"pair: Pair() Versuch {attempt}/{args.attempts} -- "
+            f"{time.strftime('%H:%M:%S')}  pair: Pair() Versuch {attempt}/{args.attempts} -- "
             "CODE AM KAMERA-DISPLAY JETZT BESTAETIGEN"
         )
+        t0 = time.monotonic()
         try:
             pair_call(obj, args.timeout)
         except dbus.exceptions.DBusException as exc:
-            print(f"pair: Versuch {attempt} scheiterte: {exc.get_dbus_name()}")
+            # failure latency is a diagnostic: ~2 s smells like an unanswered
+            # request (agent/IO caps), ~25 s like a confirmation window that
+            # closed unconfirmed (measured, Nacht III + Abend)
+            print(
+                f"pair: Versuch {attempt} scheiterte nach {time.monotonic() - t0:.1f}s: "
+                f"{exc.get_dbus_name()}"
+            )
         if is_paired(bus, args.address):
             print("pair: BOND_OK")
             return 0

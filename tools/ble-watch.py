@@ -30,11 +30,6 @@ import sys
 import tempfile
 import time
 
-try:
-    from bleak import BleakScanner
-except ImportError:  # pragma: no cover - bench tool
-    sys.exit("bleak is missing: pip install bleak")
-
 VENDOR = "-3dd4-4255-8d62-6dc7b9bd5561"
 SERVICE = f"0000de00{VENDOR}"
 NIKON_COMPANY = 0x0399
@@ -99,6 +94,11 @@ def run_status() -> int:
 
 
 async def run_scanner() -> None:
+    try:
+        from bleak import BleakScanner
+    except ImportError:  # pragma: no cover - bench tool
+        sys.exit("bleak is missing: pip install bleak")
+
     last_seen = 0.0
     phase = "lost"
     pause_start = time.monotonic()
