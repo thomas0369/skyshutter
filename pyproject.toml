@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "skyshutter"
-version = "0.1.0"
-description = "Control a Nikon camera (Coolpix P1100 and friends) over its own WiFi via PTP/IP"
+version = "0.2.0"
+description = "Control a Nikon Coolpix camera over its own WiFi via PTP/IP"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
@@ -19,6 +19,8 @@ sim = ["pillow>=10"]
 # the bench tools in tools/ -- see tools/README.md for which needs what.
 usb = ["pyusb>=1.2"]
 ble = ["bleak>=0.22", "pycryptodome>=3.20"]
+# the field rig (Raspberry Pi): BLE handshake + classic pairing + AP join
+pi = ["bleak>=0.22", "pycryptodome>=3.20"]
 # Windows only: the BLE tools drive the WinRT stack directly, because WSL has
 # no Bluetooth access at all. Install these under the *Windows* Python.
 windows = [

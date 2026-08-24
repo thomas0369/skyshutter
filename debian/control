@@ -1,0 +1,38 @@
+Source: skyshutter
+Section: python
+Priority: optional
+Maintainer: thomas0369 <thomas@localhost>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ python3-all,
+ python3-setuptools,
+ pybuild-plugin-pyproject,
+Standards-Version: 4.6.2
+Homepage: https://github.com/thomas0369/skyshutter
+Rules-Requires-Root: no
+
+Package: python3-skyshutter
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+Description: Control a Nikon Coolpix camera over its own WiFi via PTP/IP
+ skyshutter speaks PTP/IP to the camera's own access point: pairing
+ handshake (BLE), live view, shutter release and property access. The
+ core client is pure stdlib; bench tools may pull optional extras.
+ .
+ This package ships the library and the `skyshutter` CLI.
+
+Package: skyshutter-pi
+Architecture: all
+Depends:
+ python3-skyshutter,
+ ${misc:Depends},
+Recommends:
+ python3-bleak,
+ python3-pycryptodome,
+Description: Field-rig meta package for skyshutter
+ Pulls python3-skyshutter plus the BLE stack used on the Raspberry Pi
+ rig and installs the systemd user units (ble-watch, pair-agent) as
+ examples under /usr/share/doc/skyshutter-pi/examples/.

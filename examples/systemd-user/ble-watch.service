@@ -1,0 +1,11 @@
+[Unit]
+Description=skyshutter BLE camera watch
+After=bluetooth.target
+
+[Service]
+ExecStart=/usr/bin/env python3 /opt/skyshutter/tools/ble-watch.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

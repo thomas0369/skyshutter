@@ -1,0 +1,5 @@
+skyshutter (0.2.0) unstable; urgency=medium
+
+  * Native packaging: library + CLI, pi metapackage with user units
+
+ -- thomas0369 <thomas@localhost>  Mon, 24 Aug 2026 22:30:00 +0200

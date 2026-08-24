@@ -1,0 +1,12 @@
+[Unit]
+Description=skyshutter automatic camera pairing
+After=ble-watch.service pair-agent.service
+Wants=ble-watch.service pair-agent.service
+
+[Service]
+ExecStart=/bin/bash /opt/skyshutter/tools/auto-pair.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
