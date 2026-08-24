@@ -38,7 +38,7 @@ def test_status_shows_na_for_hci_marker_and_the_name(tmp_path, monkeypatch, caps
             {
                 "ts": time.time() - 1.0,
                 "addr": "51:D6:74:D3:55:5A",
-                "name": "P1100_<serno>",
+                "name": "P1100_SN1234",
                 "rssi": -127,
                 "flags": {},
             },
@@ -49,7 +49,7 @@ def test_status_shows_na_for_hci_marker_and_the_name(tmp_path, monkeypatch, caps
     out = capsys.readouterr().out
     assert rc == 0  # fresh sighting
     assert "rssi=n/a" in out  # -127 is not a signal strength
-    assert "P1100_<serno>" in out  # identity via name, address rotates
+    assert "P1100_SN1234" in out  # identity via name, address rotates
 
 
 def test_status_exit_codes_fresh_stale_never(tmp_path, monkeypatch):

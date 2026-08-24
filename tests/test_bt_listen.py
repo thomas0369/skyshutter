@@ -70,7 +70,7 @@ def test_parse_adv_report_truncated_is_safe():
 def test_is_nikon_detection_paths():
     by_mfg = {"names": [], "uuids": [], "mfg": {0x0399: "00"}}
     assert bt_listen.is_nikon(by_mfg)
-    by_name = {"names": ["P1100_<serno>"], "uuids": [], "mfg": {}}
+    by_name = {"names": ["P1100_SN1234"], "uuids": [], "mfg": {}}
     assert bt_listen.is_nikon(by_name)
     other = {"names": ["LG TV"], "uuids": [], "mfg": {0x00E0: "00"}}
     assert not bt_listen.is_nikon(other)

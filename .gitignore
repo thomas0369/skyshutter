@@ -18,3 +18,8 @@ measurements/*.txt
 measurements/*.bin
 !measurements/*-redacted.txt
 .auftraege/
+
+# lokale Messwerte / Delegat-Artefakte -- nie committen
+docs/secrets.local.md
+ergebnis.md
+dist/
