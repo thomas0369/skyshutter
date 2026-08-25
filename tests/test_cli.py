@@ -101,14 +101,14 @@ def test_set_writes_exposure_settings(
     assert main(_args(camera_address, "set", "program", "M")) == 0
     assert main(_args(camera_address, "set", "drive", "burst")) == 0
     assert camera_server.properties[NikonProperty.SHUTTER_SPEED] == _s.pack("<II", 1, 30)
-    assert camera_server.properties[StandardProperty.ISO] == _s.pack("<I", 800)
-    assert camera_server.properties[StandardProperty.F_NUMBER] == _s.pack("<I", 560)
-    assert camera_server.properties[StandardProperty.EXPOSURE_BIAS] == _s.pack("<i", -700)
+    assert camera_server.properties[StandardProperty.ISO] == _s.pack("<H", 800)
+    assert camera_server.properties[StandardProperty.F_NUMBER] == _s.pack("<H", 560)
+    assert camera_server.properties[StandardProperty.EXPOSURE_BIAS] == _s.pack("<h", -700)
     assert camera_server.properties[StandardProperty.EXPOSURE_PROGRAM] == _s.pack(
-        "<I", int(ExposureProgram.MANUAL)
+        "<H", int(ExposureProgram.MANUAL)
     )
     assert camera_server.properties[StandardProperty.STILL_CAPTURE_MODE] == _s.pack(
-        "<I", int(DriveMode.BURST)
+        "<H", int(DriveMode.BURST)
     )
 
 

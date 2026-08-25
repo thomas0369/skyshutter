@@ -432,6 +432,11 @@ class NikonCamera:
         raw = self.get_property(code)
         return int.from_bytes(raw[:4], "little") if len(raw) >= 4 else 0
 
+    def get_property_u16(self, code: int) -> int:
+        """uint16 property value -- the width most exposure props declare."""
+        raw = self.get_property(code)
+        return int.from_bytes(raw[:2], "little") if len(raw) >= 2 else 0
+
     def set_property(self, code: int, value: bytes) -> None:
         """Set raw value of a device property."""
         self.connection.transaction(OperationCode.SET_DEVICE_PROP_VALUE, (code,), data=value)
@@ -440,10 +445,17 @@ class NikonCamera:
         """Set uint32 value of a device property."""
         self.set_property(code, struct.pack("<I", value))
 
+    def set_property_u16(self, code: int, value: int) -> None:
+        """Set uint16 value of a device property (measured width, 26.08.)."""
+        self.set_property(code, struct.pack("<H", value))
+
     # -- typed exposure controls ------------------------------------------
-    # Formats per ISO 15740; the shutter pair is the vendor form measured
-    # from the app (referenz.md). None of these writes has run on hardware
-    # yet -- simulator only. Hardware validation needs the owner's OK.
+    # Widths are MEASURED from the camera's own PropertyDescs (26.08.2026,
+    # bundle /tmp/bundle-hw/props.json): 0xD100 is INT64 (the vendor
+    # numerator/denominator pair), F_NUMBER / EXPOSURE_PROGRAM / ISO /
+    # STILL_CAPTURE_MODE are UINT16, EXPOSURE_BIAS is INT16 -- even where
+    # ISO 15740 suggests 32-bit. Writes must match the declared type.
+    # The writes themselves still need the owner's OK for hardware runs.
 
     def shutter_speed(self) -> tuple[int, int]:
         """Shutter speed as (numerator, denominator); 0xFFFF/0xFFFF is Bulb."""
@@ -457,37 +469,38 @@ class NikonCamera:
         self.set_property(NikonProperty.SHUTTER_SPEED, struct.pack("<II", numerator, denominator))
 
     def iso(self) -> int:
-        return self.get_property_u32(StandardProperty.ISO)
+        """ISO; 0 means Auto (measured: current 0 while the enum starts at 100)."""
+        return self.get_property_u16(StandardProperty.ISO)
 
     def set_iso(self, value: int) -> None:
-        self.set_property_u32(StandardProperty.ISO, value)
+        self.set_property_u16(StandardProperty.ISO, value)
 
     def aperture(self) -> float:
-        """F-number; PTP carries it times 100 (ISO 15740)."""
-        return self.get_property_u32(StandardProperty.F_NUMBER) / 100.0
+        """F-number; the wire carries it times 100 (measured: UINT16)."""
+        return self.get_property_u16(StandardProperty.F_NUMBER) / 100.0
 
     def set_aperture(self, f_number: float) -> None:
-        self.set_property_u32(StandardProperty.F_NUMBER, round(f_number * 100))
+        self.set_property_u16(StandardProperty.F_NUMBER, round(f_number * 100))
 
     def exposure_bias(self) -> float:
-        """Exposure compensation in stops; the wire unit is millistops."""
+        """Exposure compensation in stops; INT16 millistops on the wire."""
         raw = self.get_property(StandardProperty.EXPOSURE_BIAS)
-        return struct.unpack("<i", raw[:4])[0] / 1000.0 if len(raw) >= 4 else 0.0
+        return struct.unpack("<h", raw[:2])[0] / 1000.0 if len(raw) >= 2 else 0.0
 
     def set_exposure_bias(self, stops: float) -> None:
-        self.set_property(StandardProperty.EXPOSURE_BIAS, struct.pack("<i", round(stops * 1000)))
+        self.set_property(StandardProperty.EXPOSURE_BIAS, struct.pack("<h", round(stops * 1000)))
 
     def exposure_program(self) -> ExposureProgram:
-        return ExposureProgram(self.get_property_u32(StandardProperty.EXPOSURE_PROGRAM))
+        return ExposureProgram(self.get_property_u16(StandardProperty.EXPOSURE_PROGRAM))
 
     def set_exposure_program(self, mode: ExposureProgram) -> None:
-        self.set_property_u32(StandardProperty.EXPOSURE_PROGRAM, int(mode))
+        self.set_property_u16(StandardProperty.EXPOSURE_PROGRAM, int(mode))
 
     def drive_mode(self) -> DriveMode:
-        return DriveMode(self.get_property_u32(StandardProperty.STILL_CAPTURE_MODE))
+        return DriveMode(self.get_property_u16(StandardProperty.STILL_CAPTURE_MODE))
 
     def set_drive_mode(self, mode: DriveMode) -> None:
-        self.set_property_u32(StandardProperty.STILL_CAPTURE_MODE, int(mode))
+        self.set_property_u16(StandardProperty.STILL_CAPTURE_MODE, int(mode))
 
     def focal_length(self) -> int:
         """Current focal length in mm (read-only; zoom runs through 0x9016)."""

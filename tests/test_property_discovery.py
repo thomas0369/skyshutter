@@ -111,7 +111,8 @@ def test_write_property_value(camera_address: tuple[str, int]) -> None:
         assert camera.shutter_speed() == (1, 60)
         camera.set_shutter_speed(1, 30)
         assert camera.shutter_speed() == (1, 30)
-        # Plain uint32 properties round-trip through the raw helpers.
+        # Plain property widths round-trip through the raw helpers; ISO is
+        # a measured UINT16, the shutter the vendor INT64 pair.
         assert camera.iso() == 100
-        camera.set_property_u32(StandardProperty.ISO, 800)
-        assert camera.get_property_u32(StandardProperty.ISO) == 800
+        camera.set_iso(800)
+        assert camera.iso() == 800

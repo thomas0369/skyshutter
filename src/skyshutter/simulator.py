@@ -250,13 +250,13 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
             NikonProperty.REMAINING_CAPTURE: struct.pack("<I", 999),
             NikonProperty.LENS_FOCAL_MIN: struct.pack("<I", 24),
             NikonProperty.LENS_FOCAL_MAX: struct.pack("<I", 3000),
-            StandardProperty.F_NUMBER: struct.pack("<I", 280),  # f/2.8
+            StandardProperty.F_NUMBER: struct.pack("<H", 280),  # f/2.8, UINT16
             StandardProperty.FOCAL_LENGTH: struct.pack("<I", 24),
-            StandardProperty.FOCUS_MODE: struct.pack("<I", 0x8010),  # AF-S
-            StandardProperty.EXPOSURE_PROGRAM: struct.pack("<I", int(ExposureProgram.PROGRAM_AUTO)),
-            StandardProperty.ISO: struct.pack("<I", 100),
-            StandardProperty.EXPOSURE_BIAS: struct.pack("<i", 0),
-            StandardProperty.STILL_CAPTURE_MODE: struct.pack("<I", int(DriveMode.SINGLE)),
+            StandardProperty.FOCUS_MODE: struct.pack("<H", 0x8010),  # AF-S, UINT16
+            StandardProperty.EXPOSURE_PROGRAM: struct.pack("<H", int(ExposureProgram.PROGRAM_AUTO)),
+            StandardProperty.ISO: struct.pack("<H", 100),  # 0 would be Auto
+            StandardProperty.EXPOSURE_BIAS: struct.pack("<h", 0),  # INT16 millistops
+            StandardProperty.STILL_CAPTURE_MODE: struct.pack("<H", int(DriveMode.SINGLE)),
         }
 
     def operation(
