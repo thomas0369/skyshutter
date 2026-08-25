@@ -15,7 +15,16 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from enum import IntEnum, IntFlag
 
-from .ptp import DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
+from .ptp import (
+    DeviceInfo,
+    OperationCode,
+    PropertyDesc,
+    PtpError,
+    ResponseCode,
+    StorageInfo,
+    Unpacker,
+    code_name,
+)
 from .ptpip import PtpIpConnection
 
 log = logging.getLogger(__name__)
@@ -269,9 +278,7 @@ class NikonCamera:
             return True
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            result = self.connection.transaction(
-                NikonOperation.DEVICE_READY, raise_on_error=False
-            )
+            result = self.connection.transaction(NikonOperation.DEVICE_READY, raise_on_error=False)
             if result.response_code != ResponseCode.DEVICE_BUSY:
                 return result.ok
             time.sleep(interval)
@@ -349,6 +356,63 @@ class NikonCamera:
     def get_property_u32(self, code: int) -> int:
         raw = self.get_property(code)
         return int.from_bytes(raw[:4], "little") if len(raw) >= 4 else 0
+
+    @staticmethod
+    def _parse_code_list(data: bytes) -> list[int]:
+        """uint16 property codes from a vendor list operation.
+
+        The wire format of ``GetVendorPropCodes`` is not documented. Two shapes
+        are plausible -- a bare run of uint16 values, or a PTP array with a
+        uint32 count prefix. The array form is tried first because it is what
+        the rest of the protocol uses; the bare run is the fallback.
+        """
+        if len(data) >= 4:
+            count = int.from_bytes(data[:4], "little")
+            if count * 2 == len(data) - 4:
+                return [int.from_bytes(data[4 + i * 2 : 6 + i * 2], "little") for i in range(count)]
+        return [int.from_bytes(data[i * 2 : i * 2 + 2], "little") for i in range(len(data) // 2)]
+
+    def vendor_property_codes(self) -> list[int]:
+        """The vendor device-property codes this camera offers (0x90CA)."""
+        result = self.connection.transaction(NikonOperation.GET_VENDOR_PROP_CODES)
+        return self._parse_code_list(result.data)
+
+    def property_desc(self, code: int) -> PropertyDesc:
+        """The descriptor (type, access, value range) of one device property."""
+        result = self.connection.transaction(OperationCode.GET_DEVICE_PROP_DESC, (code,))
+        return PropertyDesc.parse(result.data)
+
+    def properties(self) -> dict[int, PropertyDesc]:
+        """Every known device property with its descriptor.
+
+        Combines the standard ``device_properties_supported`` list with the
+        vendor codes from 0x90CA, then asks the camera for each descriptor. A
+        property the camera refuses to describe is skipped, not fatal -- the
+        goal is a map of what is there, not an all-or-nothing dump.
+        """
+        codes = set(self.device_info.device_properties_supported) if self.device_info else set()
+        try:
+            codes.update(self.vendor_property_codes())
+        except PtpError as exc:
+            log.debug("vendor property codes unavailable: %s", exc)
+        out: dict[int, PropertyDesc] = {}
+        for code in sorted(codes):
+            try:
+                out[code] = self.property_desc(code)
+            except PtpError as exc:
+                log.debug("no descriptor for 0x%04X: %s", code, exc)
+        return out
+
+    def storage_ids(self) -> list[int]:
+        """The storage media this camera exposes."""
+        result = self.connection.transaction(OperationCode.GET_STORAGE_IDS)
+        u = Unpacker(result.data)
+        return u.array("uint32")
+
+    def storage_info(self, storage_id: int) -> StorageInfo:
+        """Capacity and free space of one storage medium."""
+        result = self.connection.transaction(OperationCode.GET_STORAGE_INFO, (storage_id,))
+        return StorageInfo.parse(result.data)
 
     def live_view_prohibit(self) -> LiveViewProhibit:
         """Why live view would refuse right now; falsy when nothing is in the way.
@@ -473,9 +537,7 @@ class NikonCamera:
         autofocus frame and the orientation sensor -- worth having when the
         camera sits on a tripod pointing at the sky.
         """
-        result = self.connection.transaction(
-            NikonOperation.GET_LIVE_VIEW_IMG, raise_on_error=False
-        )
+        result = self.connection.transaction(NikonOperation.GET_LIVE_VIEW_IMG, raise_on_error=False)
         if not result.ok:
             if result.response_code == ResponseCode.DEVICE_BUSY:
                 return None

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from . import btsnoop, config, discovery, lssec
 from .nikon import NikonCamera, NikonOperation
-from .ptp import DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
+from .ptp import AccessCapability, DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import DEFAULT_PORT, PtpIpConnection, PtpIpError
 
 log = logging.getLogger("skyshutter")
@@ -73,6 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
     probe.add_argument("--scan-timeout", type=float, default=1.0)
 
     _subparser(sub, "info", "dump DeviceInfo, including supported operations")
+    props = _subparser(sub, "props", "list the device properties and storage")
+    props.add_argument("--json", action="store_true", help="print as JSON")
     _subparser(sub, "events", "poll the camera event queue until interrupted")
 
     shoot = _subparser(sub, "shoot", "release the shutter")
@@ -207,6 +209,68 @@ def cmd_info(args: argparse.Namespace) -> int:
     return 0
 
 
+def _access_name(access: int) -> str:
+    r = bool(access & AccessCapability.READ)
+    w = bool(access & AccessCapability.WRITE)
+    if r and w:
+        return "read/write"
+    if r:
+        return "read-only"
+    if w:
+        return "write-only"
+    return "none"
+
+
+def _gib(n: int) -> str:
+    return f"{n / 1024**3:.1f} GiB"
+
+
+def cmd_props(args: argparse.Namespace) -> int:
+    with NikonCamera.open(
+        _resolve_host(args),
+        port=args.port,
+        guid=config.client_guid(args.guid),
+        friendly_name=config.client_name(args.name),
+        timeout=args.timeout,
+    ) as camera:
+        props = camera.properties()
+        storage = {sid: camera.storage_info(sid) for sid in camera.storage_ids()}
+
+        if args.json:
+            payload = {
+                "properties": {
+                    f"0x{code:04X}": {
+                        "data_type": f"0x{d.data_type:04X}",
+                        "access": _access_name(d.access),
+                        "default": d.default_value,
+                    }
+                    for code, d in sorted(props.items())
+                },
+                "storage": {
+                    f"0x{sid:08X}": {
+                        "max_capacity": s.max_capacity,
+                        "free_space_bytes": s.free_space_bytes,
+                        "free_space_objects": s.free_space_objects,
+                    }
+                    for sid, s in storage.items()
+                },
+            }
+            print(json.dumps(payload, indent=2))
+            return 0
+
+        print(f"properties ({len(props)}):")
+        for code, d in sorted(props.items()):
+            default = f"  default {d.default_value}" if d.default_value is not None else ""
+            print(f"  0x{code:04X}  0x{d.data_type:04X}  {_access_name(d.access)}{default}")
+        print(f"\nstorage ({len(storage)}):")
+        for sid, s in storage.items():
+            print(
+                f"  0x{sid:08X}  {_gib(s.max_capacity)} total, "
+                f"{_gib(s.free_space_bytes)} free, {s.free_space_objects} objects"
+            )
+    return 0
+
+
 def cmd_events(args: argparse.Namespace) -> int:
     with NikonCamera.open(
         _resolve_host(args),
@@ -296,9 +360,7 @@ def cmd_raw(args: argparse.Namespace) -> int:
     try:
         if not args.no_session:
             connection.open_session()
-        result = connection.transaction(
-            args.opcode, tuple(args.params), raise_on_error=False
-        )
+        result = connection.transaction(args.opcode, tuple(args.params), raise_on_error=False)
         print(
             f"response {code_name(result.response_code, ResponseCode)} "
             f"[0x{result.response_code:04X}]"
@@ -356,8 +418,12 @@ def cmd_wifi(args: argparse.Namespace) -> int:
     on the command line -- and prints the SSID and password. Nothing here talks
     to the camera; it is pure decryption of bytes already in hand.
     """
-    fields = {"stage1": args.stage1, "stage2": args.stage2, "stage4": args.stage4,
-              "config": args.config}
+    fields = {
+        "stage1": args.stage1,
+        "stage2": args.stage2,
+        "stage4": args.stage4,
+        "config": args.config,
+    }
     if args.pairing is not None:
         data = json.loads(args.pairing.read_text())
         for key in fields:
@@ -382,8 +448,9 @@ def cmd_wifi(args: argparse.Namespace) -> int:
         raw["stage1"], raw["stage2"], raw["stage4"], raw["config"]
     )
     if not cred.ssid:
-        print("error: decryption produced an empty SSID -- wrong handshake values?",
-              file=sys.stderr)
+        print(
+            "error: decryption produced an empty SSID -- wrong handshake values?", file=sys.stderr
+        )
         return 1
 
     print(f"SSID      {cred.ssid}")
@@ -401,6 +468,7 @@ def cmd_wifi(args: argparse.Namespace) -> int:
 COMMANDS = {
     "probe": cmd_probe,
     "info": cmd_info,
+    "props": cmd_props,
     "events": cmd_events,
     "shoot": cmd_shoot,
     "liveview": cmd_liveview,

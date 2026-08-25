@@ -199,8 +199,9 @@ class DeviceInfo:
 
     def pack(self) -> bytes:
         """Inverse of :meth:`parse` (used by tests and the simulator)."""
-        out = struct.pack("<HIH", self.standard_version, self.vendor_extension_id,
-                          self.vendor_extension_version)
+        out = struct.pack(
+            "<HIH", self.standard_version, self.vendor_extension_id, self.vendor_extension_version
+        )
         out += pack_string(self.vendor_extension_desc)
         out += struct.pack("<H", self.functional_mode)
         for array in (
@@ -222,3 +223,149 @@ class DeviceInfo:
 
     def supports(self, opcode: int) -> bool:
         return opcode in self.operations_supported
+
+
+class DataType(IntEnum):
+    """PTP device-property data types (ISO 15740 §5.8)."""
+
+    UINT8 = 0x0001
+    INT8 = 0x0002
+    UINT16 = 0x0003
+    INT16 = 0x0004
+    UINT32 = 0x0005
+    INT32 = 0x0006
+    UINT64 = 0x0007
+    INT64 = 0x0008
+    IEC60529 = 0x0009
+    FIXED = 0x000A
+    FLOAT = 0x000B
+    STRING = 0x000C
+    DATE_TIME = 0x000D
+    CONTAINER = 0x000E
+    UUID = 0x000F
+    URI = 0x0010
+    UNDEFINED = 0x0011
+
+
+class AccessCapability(IntEnum):
+    """Bitmask for the ``access_capability`` field of a property descriptor."""
+
+    READ = 0x0001
+    WRITE = 0x0002
+
+
+class FormFlag(IntEnum):
+    """Bitmask for the ``form_flag`` field of a property descriptor."""
+
+    DEFAULT = 0x0001
+    RANGE = 0x0002
+    ENUMERATION = 0x0004
+    TEXT = 0x0008
+
+
+@dataclass
+class PropertyDesc:
+    """Parsed ``GetDevicePropDesc`` dataset describing one device property."""
+
+    code: int
+    data_type: int
+    access: int
+    form_flag: int = 0
+    data_size: int = 0
+    default_value: int | None = None
+    minimum: int | None = None
+    maximum: int | None = None
+    step: int | None = None
+    enumeration: list[int] = field(default_factory=list)
+    text: str = ""
+
+    @property
+    def readable(self) -> bool:
+        return bool(self.access & AccessCapability.READ)
+
+    @property
+    def writable(self) -> bool:
+        return bool(self.access & AccessCapability.WRITE)
+
+    @classmethod
+    def parse(cls, data: bytes) -> PropertyDesc:
+        u = Unpacker(data)
+        desc = cls(
+            code=u.uint16(),
+            data_type=u.uint16(),
+            access=u.uint16(),
+            form_flag=u.uint32(),
+            data_size=u.uint32(),
+        )
+        if desc.form_flag & FormFlag.DEFAULT:
+            desc.default_value = u.uint32()
+        if desc.form_flag & FormFlag.RANGE:
+            desc.minimum = u.uint32()
+            desc.maximum = u.uint32()
+            desc.step = u.uint32()
+        if desc.form_flag & FormFlag.ENUMERATION:
+            count = u.uint32()
+            desc.enumeration = [u.uint32() for _ in range(count)]
+        if desc.form_flag & FormFlag.TEXT and u.remaining > 0:
+            desc.text = u.string()
+        return desc
+
+    def pack(self) -> bytes:
+        form = self.form_flag
+        size = 0
+        if form & FormFlag.DEFAULT:
+            size += 4
+        if form & FormFlag.RANGE:
+            size += 12
+        if form & FormFlag.ENUMERATION:
+            size += 4 + 4 * len(self.enumeration)
+        if form & FormFlag.TEXT:
+            size += len(pack_string(self.text))
+        out = struct.pack("<HHHI", self.code, self.data_type, self.access, form)
+        out += struct.pack("<I", size)
+        if form & FormFlag.DEFAULT:
+            out += struct.pack("<I", self.default_value or 0)
+        if form & FormFlag.RANGE:
+            out += struct.pack("<III", self.minimum or 0, self.maximum or 0, self.step or 0)
+        if form & FormFlag.ENUMERATION:
+            out += struct.pack("<I", len(self.enumeration))
+            out += b"".join(struct.pack("<I", v) for v in self.enumeration)
+        if form & FormFlag.TEXT:
+            out += pack_string(self.text)
+        return out
+
+
+@dataclass
+class StorageInfo:
+    """Parsed ``GetStorageInfo`` dataset for one storage medium."""
+
+    storage_id: int
+    storage_type: int
+    access_capability: int
+    max_capacity: int
+    free_space_bytes: int
+    free_space_objects: int
+
+    @classmethod
+    def parse(cls, data: bytes) -> StorageInfo:
+        u = Unpacker(data)
+        return cls(
+            storage_id=u.uint32(),
+            storage_type=u.uint16(),
+            access_capability=u.uint16(),
+            max_capacity=u.uint64(),
+            free_space_bytes=u.uint64(),
+            free_space_objects=u.uint64(),
+        )
+
+    def pack(self) -> bytes:
+        """Inverse of :meth:`parse` (used by tests and the simulator)."""
+        return struct.pack(
+            "<IHHQQQ",
+            self.storage_id,
+            self.storage_type,
+            self.access_capability,
+            self.max_capacity,
+            self.free_space_bytes,
+            self.free_space_objects,
+        )

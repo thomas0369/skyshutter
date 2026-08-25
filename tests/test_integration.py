@@ -71,8 +71,10 @@ def test_unsupported_operation_raises_with_the_response_code(
 ) -> None:
     host, port = camera_address
     with NikonCamera.open(host, port=port, timeout=5) as camera:
+        # 0x90C7 is the old event poll; this camera offers only 0x941C, so the
+        # simulator refuses it the way the real camera would.
         with pytest.raises(PtpError) as excinfo:
-            camera.connection.transaction(NikonOperation.GET_VENDOR_PROP_CODES)
+            camera.connection.transaction(NikonOperation.GET_EVENT)
     assert excinfo.value.code == ResponseCode.OPERATION_NOT_SUPPORTED
 
 

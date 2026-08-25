@@ -22,7 +22,17 @@ import struct
 import uuid
 
 from .nikon import NikonOperation, NikonProperty
-from .ptp import DeviceInfo, OperationCode, ResponseCode, VendorExtension
+from .ptp import (
+    AccessCapability,
+    DataType,
+    DeviceInfo,
+    FormFlag,
+    OperationCode,
+    PropertyDesc,
+    ResponseCode,
+    StorageInfo,
+    VendorExtension,
+)
 from .ptpip import (
     DEFAULT_PORT,
     Packet,
@@ -40,6 +50,7 @@ SIMULATED_OPERATIONS = [
     OperationCode.OPEN_SESSION,
     OperationCode.CLOSE_SESSION,
     OperationCode.GET_STORAGE_IDS,
+    OperationCode.GET_STORAGE_INFO,
     OperationCode.GET_OBJECT_HANDLES,
     OperationCode.GET_OBJECT,
     OperationCode.GET_THUMB,
@@ -60,6 +71,7 @@ SIMULATED_OPERATIONS = [
     NikonOperation.GET_LIVE_VIEW_IMG,
     NikonOperation.INITIATE_CAPTURE_REC_IN_MEDIA,
     NikonOperation.ZOOM_CONTROL,
+    NikonOperation.GET_VENDOR_PROP_CODES,
 ]
 
 SIMULATOR_GUID = uuid.UUID("5c9a7e00-0000-4000-8000-000000000001")
@@ -174,9 +186,7 @@ class _Handler(socketserver.BaseRequestHandler):
             send_packet(
                 sock, Packet(PacketType.START_DATA, struct.pack("<IQ", transaction_id, len(data)))
             )
-            send_packet(
-                sock, Packet(PacketType.END_DATA, struct.pack("<I", transaction_id) + data)
-            )
+            send_packet(sock, Packet(PacketType.END_DATA, struct.pack("<I", transaction_id) + data))
         send_packet(
             sock, Packet(PacketType.OPERATION_RESPONSE, struct.pack("<HI", code, transaction_id))
         )
@@ -248,6 +258,42 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         ):
             self.captures += 1
             return ResponseCode.OK, b""
+        if opcode == NikonOperation.GET_VENDOR_PROP_CODES:
+            # uint32 count, then the vendor property codes as uint16 -- the
+            # array form _parse_code_list tries first.
+            codes = list(self.properties)
+            return ResponseCode.OK, struct.pack("<I", len(codes)) + b"".join(
+                struct.pack("<H", c) for c in codes
+            )
+        if opcode == OperationCode.GET_DEVICE_PROP_DESC:
+            code = params[0] if params else 0
+            if code in self.properties:
+                desc = PropertyDesc(
+                    code=code,
+                    data_type=DataType.UINT32,
+                    access=int(AccessCapability.READ) | int(AccessCapability.WRITE),
+                    form_flag=FormFlag.DEFAULT,
+                    data_size=4,
+                    default_value=self.properties[code],
+                )
+                return ResponseCode.OK, desc.pack()
+            return ResponseCode.OPERATION_NOT_SUPPORTED, b""
+        if opcode == OperationCode.GET_STORAGE_IDS:
+            ids = [0x50000001]
+            return ResponseCode.OK, struct.pack("<I", len(ids)) + b"".join(
+                struct.pack("<I", i) for i in ids
+            )
+        if opcode == OperationCode.GET_STORAGE_INFO:
+            sid = params[0] if params else 0
+            info = StorageInfo(
+                storage_id=sid,
+                storage_type=0x0003,
+                access_capability=0x0003,
+                max_capacity=32 * 1024**3,
+                free_space_bytes=28 * 1024**3,
+                free_space_objects=12345,
+            )
+            return ResponseCode.OK, info.pack()
         return ResponseCode.OPERATION_NOT_SUPPORTED, b""
 
 

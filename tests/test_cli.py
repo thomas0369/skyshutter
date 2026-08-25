@@ -51,7 +51,8 @@ def test_info_lists_supported_operations(
 
 
 def test_shoot_triggers_the_requested_number_of_exposures(
-    camera_address: tuple[str, int], camera_server: SimulatorServer,
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     assert main(_args(camera_address, "shoot", "-n", "3", "--af")) == 0
@@ -82,7 +83,9 @@ def test_raw_prints_the_response_and_data(
 def test_raw_reports_an_unsupported_opcode(
     camera_address: tuple[str, int], capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert main(_args(camera_address, "raw", "0x90CA")) == 1
+    # 0x90C7 (old event poll) is not offered by this camera, so the simulator
+    # answers OPERATION_NOT_SUPPORTED, as the real camera would.
+    assert main(_args(camera_address, "raw", "0x90C7")) == 1
     assert "OPERATION_NOT_SUPPORTED" in capsys.readouterr().out
 
 
