@@ -60,6 +60,31 @@ def test_shoot_triggers_the_requested_number_of_exposures(
     assert "exposure 3/3 triggered" in capsys.readouterr().out
 
 
+def test_download_fetches_the_newest_captures(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    assert main(_args(camera_address, "shoot", "-n", "2")) == 0
+    assert main(_args(camera_address, "download", "--last", "2", "-o", str(tmp_path))) == 0
+    out = capsys.readouterr().out
+    assert "MB ->" in out
+    jpgs = sorted(tmp_path.glob("DSC_*.JPG"))
+    assert len(jpgs) == 2
+    assert jpgs[0].read_bytes()[:2] == b"\xff\xd8"
+
+
+def test_download_list_shows_objects_without_fetching(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(_args(camera_address, "shoot", "-n", "1")) == 0
+    assert main(_args(camera_address, "download", "--list")) == 0
+    assert "DSC_" in capsys.readouterr().out
+
+
 def test_liveview_writes_frames_to_disk(
     camera_address: tuple[str, int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

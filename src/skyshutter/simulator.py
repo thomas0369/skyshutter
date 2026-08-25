@@ -52,6 +52,7 @@ SIMULATED_OPERATIONS = [
     OperationCode.GET_STORAGE_IDS,
     OperationCode.GET_STORAGE_INFO,
     OperationCode.GET_OBJECT_HANDLES,
+    OperationCode.GET_OBJECT_INFO,
     OperationCode.GET_OBJECT,
     OperationCode.GET_THUMB,
     OperationCode.INITIATE_CAPTURE,
@@ -217,6 +218,11 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         self.frame = _placeholder_jpeg()
         self.live_view_active = False
         self.captures = 0
+        #: Captures land on the "card" as objects, oldest first, so the
+        #: download path has something to walk -- like the real camera does.
+        self.objects: dict[int, bytes] = {}
+        self.filenames: dict[int, str] = {}
+        self._next_handle = 0x10000001
         #: Vendor properties the real camera reports. The prohibit condition
         #: starts clear -- a simulator with the lens retracted would be useless.
         self.properties: dict[int, int] = {
@@ -246,9 +252,19 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
                     return ResponseCode.OK, b""
             return ResponseCode.OPERATION_NOT_SUPPORTED, b""
         if opcode == OperationCode.GET_PARTIAL_OBJECT:
-            # (handle, offset, length) -- hand back that slice of the frame.
-            _, offset, length = (*params, 0, 0, 0)[:3]
-            return ResponseCode.OK, self.frame[offset : offset + length]
+            # (handle, offset, length) -- hand back that slice of the object.
+            handle, offset, length = (*params, 0, 0, 0)[:3]
+            blob = self.objects.get(handle, self.frame)
+            return ResponseCode.OK, blob[offset : offset + length]
+        if opcode == OperationCode.GET_OBJECT_HANDLES:
+            handles = list(self.objects)
+            return ResponseCode.OK, struct.pack(f"<I{len(handles)}I", len(handles), *handles)
+        if opcode == OperationCode.GET_OBJECT_INFO:
+            handle = params[0] if params else 0
+            blob = self.objects.get(handle)
+            if blob is None:
+                return ResponseCode.INVALID_OBJECT_HANDLE, b""
+            return ResponseCode.OK, self._object_info(handle, blob)
         if opcode in (OperationCode.OPEN_SESSION, OperationCode.CLOSE_SESSION):
             return ResponseCode.OK, b""
         if opcode == NikonOperation.DEVICE_READY:
@@ -275,6 +291,11 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
             NikonOperation.INITIATE_CAPTURE_REC_IN_MEDIA,
             NikonOperation.AF_DRIVE,
         ):
+            if opcode is not NikonOperation.AF_DRIVE:
+                handle = self._next_handle
+                self._next_handle += 1
+                self.objects[handle] = self.frame
+                self.filenames[handle] = f"DSC_{0x2000 + len(self.objects):04d}.JPG"
             self.captures += 1
             return ResponseCode.OK, b""
         if opcode == NikonOperation.GET_VENDOR_PROP_CODES:
@@ -314,6 +335,35 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
             )
             return ResponseCode.OK, info.pack()
         return ResponseCode.OPERATION_NOT_SUPPORTED, b""
+
+    def _object_info(self, handle: int, blob: bytes) -> bytes:
+        """Pack a PTP ObjectInfo dataset for one stored object."""
+
+        def ptp_string(text: str) -> bytes:
+            return bytes([len(text)]) + text.encode("utf-16-le") + b"\x00\x00"
+
+        # StorageID, ObjectFormat (JPEG), ProtectionStatus, CompressedSize,
+        # then the thumb/image fields the download path never reads.
+        head = struct.pack(
+            "<IHHIHIIIIIIIIHI",
+            0x50000001,
+            0x3801,
+            0,
+            len(blob),
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+        )
+        name = self.filenames.get(handle, "DSC_UNKNOWN.JPG")
+        return head + ptp_string(name) + ptp_string("20260825T220000")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -184,6 +184,47 @@ class LiveViewFrame:
         return self.whole_width / self.display_area[0]
 
 
+@dataclass(frozen=True)
+class ObjectInfo:
+    """The parts of a PTP ObjectInfo dataset worth having (ISO 15740)."""
+
+    handle: int
+    storage_id: int
+    object_format: int
+    compressed_size: int
+    filename: str
+    capture_date: str
+
+
+def parse_object_info(payload: bytes, handle: int = 0) -> ObjectInfo:
+    """Read an ObjectInfo dataset; anything past the filename is ignored.
+
+    The trailing strings (capture date, modification date, keywords) are
+    UTF-16 with a one-byte length prefix, like every PTP string.
+    """
+
+    def ptp_string(data: bytes, offset: int) -> tuple[str, int]:
+        length = data[offset]
+        chars = data[offset + 1 : offset + 1 + length * 2]
+        return chars.decode("utf-16-le", errors="replace").rstrip("\x00"), offset + 1 + length * 2
+
+    # StorageID, ObjectFormat, ProtectionStatus, CompressedSize,
+    # ThumbFormat, ThumbSize, ThumbW, ThumbH, ImageW, ImageH, BitDepth,
+    # ParentObject, AssociationType, AssociationDesc, SequenceNumber
+    (storage_id, object_format, _, compressed_size) = struct.unpack_from("<IHHI", payload, 0)
+    offset = 52  # 15 fixed fields, 52 bytes with no padding
+    filename, offset = ptp_string(payload, offset)
+    capture_date, _ = ptp_string(payload, offset)
+    return ObjectInfo(
+        handle=handle,
+        storage_id=storage_id,
+        object_format=object_format,
+        compressed_size=compressed_size,
+        filename=filename,
+        capture_date=capture_date,
+    )
+
+
 def parse_live_view(payload: bytes) -> LiveViewFrame | None:
     """Read a live view frame, header and all.
 
@@ -477,6 +518,27 @@ class NikonCamera:
         self.wait_until_ready(timeout=30.0)
 
     # -- images ------------------------------------------------------------
+
+    def object_handles(self) -> list[int]:
+        """Handles of every object on every store, in camera order.
+
+        The vendor app asks with (all stores, no format filter, all
+        associations); the answer is a count followed by that many handles.
+        """
+        self._require(OperationCode.GET_OBJECT_HANDLES, "object listing")
+        result = self.connection.transaction(
+            OperationCode.GET_OBJECT_HANDLES, (0xFFFFFFFF, 0, 0, 0xFFFFFFFF)
+        )
+        count = struct.unpack_from("<I", result.data, 0)[0]
+        if not count:
+            return []
+        return list(struct.unpack_from(f"<{count}I", result.data, 4))
+
+    def object_info(self, handle: int) -> ObjectInfo:
+        """Name and size of one stored object."""
+        self._require(OperationCode.GET_OBJECT_INFO, "object info")
+        result = self.connection.transaction(OperationCode.GET_OBJECT_INFO, (handle,))
+        return parse_object_info(result.data, handle)
 
     def download(self, handle: int, size: int, chunk: int = 1 << 20) -> bytes:
         """Fetch an image in pieces.

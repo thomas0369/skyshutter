@@ -143,6 +143,50 @@ def test_downloading_walks_the_object_in_chunks(
         assert camera.download(handle=1, size=size, chunk=16) == camera_server.frame
 
 
+def test_captures_appear_as_objects_and_download_intact(
+    camera_address: tuple[str, int], camera_server: SimulatorServer
+) -> None:
+    """Shoot, list, fetch: the workflow the vendor app runs end to end."""
+    host, port = camera_address
+    with NikonCamera.open(host, port=port, timeout=5) as camera:
+        assert camera.object_handles() == []
+        camera.capture()
+        camera.capture()
+        handles = camera.object_handles()
+        assert len(handles) == 2
+        for handle in handles:
+            info = camera.object_info(handle)
+            assert info.filename.startswith("DSC_") and info.filename.endswith(".JPG")
+            assert info.compressed_size == len(camera_server.frame)
+            assert camera.download(handle, info.compressed_size, chunk=64) == camera_server.frame
+
+
+def test_object_info_parses_name_and_size() -> None:
+    """The dataset layout: 52 fixed bytes, then PTP strings (UTF-16, len byte)."""
+    from skyshutter.nikon import parse_object_info
+
+    payload = (
+        # StorageID, format 0x3801 (JPEG), protection, compressed size
+        b"\x01\x00\x00\x50\x01\x38\x00\x00"
+        + bytes(4)  # compressed size follows below, this is padding-proof
+    )
+    # Build it properly: fixed part is 52 bytes.
+    import struct as _struct
+
+    fixed = _struct.pack(
+        "<IHHIHIIIIIIIIHI", 0x50000001, 0x3801, 0, 12345, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+    )
+    name = "DSC_2001.JPG".encode("utf-16-le") + b"\x00\x00"
+    date = "20260825T220000".encode("utf-16-le") + b"\x00\x00"
+    payload = fixed + bytes([len("DSC_2001.JPG")]) + name + bytes([14]) + date
+    info = parse_object_info(payload, handle=0x10000001)
+    assert info.filename == "DSC_2001.JPG"
+    assert info.compressed_size == 12345
+    assert info.object_format == 0x3801
+    assert info.handle == 0x10000001
+    assert len(fixed) == 52
+
+
 def test_the_event_poll_speaks_the_newer_dialect(camera_address: tuple[str, int]) -> None:
     """An empty queue must come back empty, not as a parse failure."""
     host, port = camera_address

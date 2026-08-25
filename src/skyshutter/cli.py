@@ -82,6 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     shoot.add_argument("-n", "--count", type=int, default=1)
     shoot.add_argument("--interval", type=float, default=0.0, help="seconds between exposures")
 
+    download = _subparser(sub, "download", "fetch images from the card via GetPartialObject")
+    download.add_argument("--last", type=int, default=1, help="how many of the newest images")
+    download.add_argument("-o", "--out", type=Path, default=Path("."), help="output directory")
+    download.add_argument("--list", action="store_true", help="only list objects, fetch nothing")
+
     liveview = _subparser(sub, "liveview", "save live view frames to disk")
     liveview.add_argument("-o", "--out", type=Path, default=Path("liveview"))
     liveview.add_argument("-n", "--frames", type=int, default=10)
@@ -309,6 +314,32 @@ def cmd_shoot(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_download(args: argparse.Namespace) -> int:
+    with NikonCamera.open(
+        _resolve_host(args),
+        port=args.port,
+        guid=config.client_guid(args.guid),
+        friendly_name=config.client_name(args.name),
+        timeout=args.timeout,
+    ) as camera:
+        handles = camera.object_handles()
+        if not handles:
+            print("no objects on the card")
+            return 0
+        infos = [camera.object_info(handle) for handle in handles]
+        if args.list:
+            for info in infos:
+                print(f"{info.handle:#010x}  {info.compressed_size:>10} B  {info.filename}")
+            return 0
+        for info in infos[-args.last :]:
+            data = camera.download(info.handle, info.compressed_size)
+            args.out.mkdir(parents=True, exist_ok=True)
+            path = args.out / info.filename
+            path.write_bytes(data)
+            print(f"{info.filename}: {len(data) / 1e6:.1f} MB -> {path}")
+    return 0
+
+
 def cmd_liveview(args: argparse.Namespace) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     saved = 0
@@ -472,6 +503,7 @@ COMMANDS = {
     "props": cmd_props,
     "events": cmd_events,
     "shoot": cmd_shoot,
+    "download": cmd_download,
     "liveview": cmd_liveview,
     "stream": cmd_stream,
     "raw": cmd_raw,
