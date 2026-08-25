@@ -23,12 +23,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | Dauerbetrieb erreicht — **Ende-zu-Ende-Livestream als systemd-Dienst** (BLE-Wake → AP → WLAN → MJPEG :8080), 25.08.2026 21:05, gemessen |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props`) · **Dauer-Stream: systemd `skyshutter-stream.service` + `tools/stream-wrapper.sh`, HTTP 200 auf :8080, 14 JPEG-Frames/8 s ≈ 1,75 fps @ ~540 KB** |
+| **Phase** | Fernmodus geknackt — **ControlMode 1 (0x90C2) liefert App-Stream: 36-KB-Frames @ ~27 fps möglich** (25.08. 23:06, gemessen) |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props`) · **Dauer-Stream systemd** · **0x90C2=1: Fernmodus mit ~15× kleineren Frames** |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
-| **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22). |
-| **Offenes Gate** | keines im Basissystem. Betriebs-Feinschliff: ThoTiTiMe-autoconnect-Ausnahme gilt noch (Pi-seitig), bluetoothd-Debug-Override (`-d`) noch aktiv — beides kosmetisch. |
-| **Nächster Schritt** | Frame-Rate verstehen/steigern (15-fps-Default wird von Kamera auf ~1,75 limitiert — Round-Trip `0x9201`?) · Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der HW durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". |
+| **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
+| **Offenes Gate** | Fernmodus-Integration in `stream`-CLI: ControlMode 1 + Wartephase + Frame-Größe/Bildmaße des Fernmodus-Streams vermessen. |
+| **Nächster Schritt** | `nikon.py`/`cli.py`: `enter_remote_mode()` (0x90C2=1, A003-tolerant, DeviceReady-Wartephase); stream-wrapper.sh erweitern; Bildauflösung des 36-KB-Frames messen; Dauerlauf-Messung (echte fps über 60 s). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -111,6 +111,47 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 25.08.2026 (22:39–23:08) — DURCHBRUCH Nr. 2: ControlMode 1 (0x90C2) = App-Fernmodus, 36-KB-Frames @ ~27 fps
+Aufbau:     Nach versehentlichem Bond-Verlust (bluetoothctl remove der
+            Classic-Adresse) Re-Pairing über auto-pair.sh (Code am
+            Kamera-Display von Thomas bestätigt, BOND_OK 22:38:43).
+            Danach Sweep-Skript (`tools/probe_mode.py`) über PTP/IP: pro
+            Wert eine 0x90C2-Transaktion mit Parameter (mode_val,), dann
+            Frame-Timing-Messung.
+Belegt:     - **0x90C2-Sweep:** Wert `0` → OK · Wert `1` → **OK (0x2001)** ·
+              Werte `2–5` → 0x201D (Parameter nicht unterstützt). Wert `1`
+              ist der einzige interessante — über USB wurde Wert `1` früher
+              abgelehnt (libgphoto2), über WLAN wird er akzeptiert.
+            - **Sichtbarer Effekt:** Nach Setzen von Modus 1 schaltet das
+              Kamera-Display in einen speziellen Fernmodus („Connected"-UI,
+              von Thomas beobachtet und bestätigt) — derselbe Zustand, den
+              die SnapBridge-App herstellt.
+            - **Frames im Fernmodus: ~36 KB statt ~540 KB, Abruf 35–55 ms.**
+              Gemessene Serie (12 Frames): 51.6/42.8/34.9/34.1/35.4/40.1/
+              54.7/36.9/35.8/36.6/36.8/54.9 ms — median 37 ms. ⇒ theoretisch
+              ~27 fps möglich (Kamera-Ausgabetakt noch zu messen, ob sie
+              selbst bei 30 fps neu rendert).
+            - **StartLiveView-Verhalten im Moduswechsel:** direkt nach
+              ControlMode 1 → DEVICE_BUSY (0x2019) oder A00B „nicht im Live
+              View"; nach ~2–5 s Wartezeit liefern 0x9203-Frames normal.
+              Der Moduswechsel braucht Übergangszeit.
+            - **Modus-Antwort, wenn schon drin:** 0xA003 „Moduswechsel
+              fehlgeschlagen" — idempotent behandeln: A003 = bereits im
+              Fernmodus, kein Fehler.
+            - **AP-Lebenszyklus-Falle:** Der WLAN-AP stirbt wenige Sekunden
+              nach Trennung des PTP-Clients, AUCH wenn remote-start --hold
+              die BLE-Verbindung hält. Zweiter Join-Versuch nach
+              Client-Disconnect schlägt fehl (SSID unsichtbar). Für
+              Messreihen: Verbindung halten oder 0x2005 neu schreiben.
+Neue Falle: Classic-Bond löschen ist teuer (Re-Pairing braucht Mensch am
+            Display). NIE `bluetoothctl remove` auf die Classic-Adresse
+            7C:B8:DA:A6:4F:FE ausführen — nur RPAs entfernen.
+Folge:      **Damit ist der „perfekte Stream" der App erklärt und
+              reproduzierbar:** 0x90C2=1 vor StartLiveView setzen, ~3 s
+              warten, dann 0x9203-Polling. Nächster Schritt: stream-Wrapper
+              und CLI um den Moduswechsel erweitern, Bildgröße des
+              Fernmodus-Frames vermessen (SOF-Parser), dann Dauerlauf.
 
 ### 25.08.2026 (21:37–21:45) — Frame-Rate-Ursache gemessen: Kamera-AP ist 802.11g @ 48 Mbps, Kamera sendet 6,6 Mbps
 Aufbau:     Passiv auf dem laufenden Stream (kein zweiter Client, kein

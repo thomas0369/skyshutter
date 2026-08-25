@@ -568,9 +568,35 @@ class NikonCamera:
         finally:
             self.end_live_view()
 
-    def stream_live_view(self, fps: float = 15.0) -> Iterator[bytes]:
-        """Yield live view JPEG frames until the caller stops consuming."""
+    def enter_remote_mode(self, settle: float = 3.0) -> bool:
+        """Switch the camera into the app-style remote mode (ControlMode 1).
+
+        Measured 25.08.2026: after ``0x90C2 = 1`` the camera reports OK
+        (0x2001), switches its display to the remote UI and serves ~36 KB
+        live view frames in ~37 ms instead of ~540 KB frames in ~540 ms.
+        When already in remote mode the camera answers ``0xA003``
+        ("mode change failed") -- treat that as success. The mode switch
+        needs settle time: StartLiveView right after the switch answers
+        DEVICE_BUSY (0x2019) or A00B ("not in live view").
+        """
+        result = self.connection.transaction(
+            NikonOperation.SET_CONTROL_MODE, (1,), raise_on_error=False
+        )
+        # 0xA003 = mode change rejected -- camera is already in that mode.
+        if result.ok or result.response_code == 0xA003:
+            time.sleep(settle)
+            return True
+        raise PtpError(result.response_code, NikonOperation.SET_CONTROL_MODE)
+
+    def stream_live_view(self, fps: float = 15.0, remote_mode: bool = False) -> Iterator[bytes]:
+        """Yield live view JPEG frames until the caller stops consuming.
+
+        With ``remote_mode=True`` the app-style remote mode is entered
+        first (small, fast frames; see :meth:`enter_remote_mode`).
+        """
         interval = 1.0 / fps if fps > 0 else 0.0
+        if remote_mode:
+            self.enter_remote_mode()
         with self.live_view():
             while True:
                 started = time.monotonic()

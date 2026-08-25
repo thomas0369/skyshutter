@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     stream.add_argument("--bind", default="0.0.0.0")
     stream.add_argument("--http-port", type=_int, default=8080)
     stream.add_argument("--fps", type=float, default=15.0)
+    stream.add_argument(
+        "--remote",
+        action="store_true",
+        help="enter app-style remote mode (ControlMode 1): small ~36 KB frames, fast",
+    )
 
     raw = _subparser(sub, "raw", "send an arbitrary PTP operation (protocol spelunking)")
     raw.add_argument("opcode", type=_int)
@@ -338,7 +343,9 @@ def cmd_stream(args: argparse.Namespace) -> int:
             friendly_name=config.client_name(args.name),
             timeout=args.timeout,
         ) as camera:
-            for frame in camera.stream_live_view(fps=args.fps):
+            for frame in camera.stream_live_view(
+                fps=args.fps, remote_mode=getattr(args, "remote", False)
+            ):
                 buffer.publish(frame)
     except KeyboardInterrupt:
         print()
