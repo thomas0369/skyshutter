@@ -23,12 +23,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | Fernmodus geknackt — **ControlMode 1 (0x90C2) liefert App-Stream: 36-KB-Frames @ ~27 fps möglich** (25.08. 23:06, gemessen) |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props`) · **Dauer-Stream systemd** · **0x90C2=1: Fernmodus mit ~15× kleineren Frames** |
+| **Phase** | **Fernmodus im Dauerbetrieb — `skyshutter-stream.service` liefert 640×480 @ 15 fps** (25.08. 23:33–23:35, gemessen: 183 Frames/12 s = 15,2 fps, 30-KB-Frames) |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props`) · **Dauer-Stream systemd im Fernmodus: 15 fps statt 1,85** |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | Fernmodus-Integration in `stream`-CLI: ControlMode 1 + Wartephase + Frame-Größe/Bildmaße des Fernmodus-Streams vermessen. |
-| **Nächster Schritt** | `nikon.py`/`cli.py`: `enter_remote_mode()` (0x90C2=1, A003-tolerant, DeviceReady-Wartephase); stream-wrapper.sh erweitern; Bildauflösung des 36-KB-Frames messen; Dauerlauf-Messung (echte fps über 60 s). |
+| **Offenes Gate** | Dauerlauf-Stabilität über Stunden (AP-Lebensdauer bei gehaltenem BLE-Link? Kamera-Auto-Sleep im Fernmodus?) · hochauflösender Modus parallel (Fernmodus aus ↔ 540-KB-Frames) als CLI-Option. |
+| **Nächster Schritt** | Stream über Nacht laufen lassen, morgens Journal auswerten (Wiederverbindungs-Zyklen?) · `stream --remote` mit fps-Messmodus · Fernsteuer-Liste ([referenz.md](referenz.md)) im Fernmodus durchmessen — Zoom/Belichtung sind im App-Modus ggf. freigegeben. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -111,6 +111,37 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 25.08.2026 (23:33–23:35) — Dauer-Stream im Fernmodus: 15,2 fps @ 640×480, 30 KB/Frame
+Aufbau:     `skyshutter-stream.service` (systemd, Restart=always) mit dem
+            überarbeiteten `tools/stream-wrapper.sh`: BLE-Weck → **Warten auf
+            frische Creds (mtime-Check, bis 90 s)** → nmcli-Join (20×, Creds
+            je Versuch neu gelesen) → `stream --remote --fps 25` → MJPEG
+            :8080. Zombie-LE-Cleanup zwischen Zyklen (`bluetoothctl
+            disconnect` auf die RPA, NIE auf den Classic-Bond).
+Messung:    12 s HTTP-Client auf `/stream.mjpg` (der Pfad `/` liefert nur
+            die HTML-Indexseite!): **183 Frames = 15,2 fps**, Frame-Abstand
+            median 55 ms, Framegröße 30–32 KB, Auflösung **640×480**
+            (SOF-Parser), Beweisframe `docs/proof/stream_remote_mode_640.jpg`.
+Deutung:    55 ms Frame-Takt = Kamera-Selbsttakt (~18 fps); der Dienst bremst
+            auf --fps 25, der echte Durchsatz liegt bei ~15–18 fps. Das ist
+            der SnapBridge-App-Stream: 8× schneller als der 1,85-fps-Modus
+            ohne ControlMode 1.
+Fallen (alle heute gemessen und gefixt):
+            1. **Stale-Creds-Falle:** Wrapper las die Creds-Datei 10 s nach
+               Start — der BLE-Handshake dauert aber bis 60 s und rotiert das
+               WLAN-Passwort je Session. Join mit altem Passwort scheitert
+               garantiert. Fix: mtime-Warteschleife + Creds je Versuch neu
+               lesen.
+            2. **Zombie-LE nach kill -9:** Der Wrapper killte remote-start
+               hart; der LE-Link blieb offen und die Kamera hörte auf zu
+               advertisen (Sighting 220 s alt). Fix: sauber disconnecten +
+               RPA removen pro Zyklus.
+            3. **StartLiveView DEVICE_BUSY ~30 s:** Im Fernmodus antwortet
+               StartLiveView nach dem Moduswechsel lange busy, obwohl Frames
+               fließen — die App ignoriert das und pollt Bilder. Fix:
+               `start_live_view` prüft nach Busy-Erschöpfung, ob ein Frame
+               kommt, und fährt dann fort.
 
 ### 25.08.2026 (22:39–23:08) — DURCHBRUCH Nr. 2: ControlMode 1 (0x90C2) = App-Fernmodus, 36-KB-Frames @ ~27 fps
 Aufbau:     Nach versehentlichem Bond-Verlust (bluetoothctl remove der
