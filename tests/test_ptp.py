@@ -25,7 +25,7 @@ def test_pack_empty_string() -> None:
 
 
 def test_unpacker_reads_little_endian() -> None:
-    u = Unpacker(bytes.fromhex("01" "0200" "03000000" "0400000000000000"))
+    u = Unpacker(bytes.fromhex("010200030000000400000000000000"))
     assert u.uint8() == 1
     assert u.uint16() == 2
     assert u.uint32() == 3
@@ -41,6 +41,13 @@ def test_unpacker_rejects_truncated_data() -> None:
 def test_unpacker_array() -> None:
     data = b"\x03\x00\x00\x00" + b"\x01\x10\x02\x10\x03\x10"
     assert Unpacker(data).array() == [0x1001, 0x1002, 0x1003]
+
+
+def test_unpacker_array_prevents_memory_exhaustion() -> None:
+    # array count is 2^30, but remaining data is 0 bytes
+    data = b"\x00\x00\x00\x40"
+    with pytest.raises(ValueError, match="exceeds remaining data"):
+        Unpacker(data).array()
 
 
 def test_device_info_roundtrip() -> None:

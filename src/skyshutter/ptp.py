@@ -143,6 +143,12 @@ class Unpacker:
     def array(self, item: str = "uint16") -> list[int]:
         """PTP array: uint32 element count followed by the elements."""
         count = self.uint32()
+        sizes = {"uint8": 1, "uint16": 2, "uint32": 4, "uint64": 8}
+        item_size = sizes.get(item, 2)
+        if count * item_size > self.remaining:
+            raise ValueError(
+                f"array size {count} of {item} exceeds remaining data ({self.remaining} bytes)"
+            )
         reader = getattr(self, item)
         return [reader() for _ in range(count)]
 
