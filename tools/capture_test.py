@@ -111,7 +111,8 @@ with NikonCamera.open(
     n_after = object_count(cam)
     print(f"Objekte auf der Karte nachher: {n_after} (vorher: {n_before})")
     if n_before is not None and n_after is not None:
-        print(
-            f"    --> {'AUFNAHME GEMACHT: +' + str(n_after - n_before) + ' Objekt(e)' if n_after > n_before else 'KEIN neues Objekt -- Ausloeser nicht durchgedrungen'}"
-        )
+        if n_after > n_before:
+            print(f"    --> AUFNAHME GEMACHT: +{n_after - n_before} Objekt(e)")
+        else:
+            print("    --> KEIN neues Objekt -- Ausloeser nicht durchgedrungen")
     print("Test fertig.")
