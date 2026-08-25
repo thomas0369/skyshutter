@@ -529,6 +529,19 @@ class NikonCamera:
                 raise PtpError(result.response_code, NikonOperation.START_LIVE_VIEW)
             log.debug("live view busy, attempt %d/%d", attempt, attempts)
             time.sleep(pause)
+        # Measured 25.08.2026 in remote mode (ControlMode 1): the camera
+        # keeps answering DEVICE_BUSY to StartLiveView for ~30 s after the
+        # mode switch while it is already preparing frames -- the vendor
+        # app simply ignores the error and polls for images. Do the same:
+        # if a frame arrives, live view is running regardless of the
+        # StartLiveView response.
+        try:
+            frame = self.get_live_view_frame()
+        except PtpError:
+            frame = None
+        if frame:
+            log.debug("live view busy but frames are flowing, continuing")
+            return
         raise PtpError(ResponseCode.DEVICE_BUSY, NikonOperation.START_LIVE_VIEW)
 
     def end_live_view(self) -> None:
