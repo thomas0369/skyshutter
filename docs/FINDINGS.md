@@ -23,16 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | Phase A erreicht — **WiFi-API Phase A (Read-only Property-/Storage-Inventar) steht** (Tests und CLI abgeschlossen, 25.08. 2026) |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** (21:28, `passkey=53437`) · **0x2005-WiFi-Start akzeptiert** · **AP-Join** (polkit-Fix, ~30 s) · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props` Kommando für Properties und Storage, 25.08.) |
+| **Phase** | Dauerbetrieb erreicht — **Ende-zu-Ende-Livestream als systemd-Dienst** (BLE-Wake → AP → WLAN → MJPEG :8080), 25.08.2026 21:05, gemessen |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props`) · **Dauer-Stream: systemd `skyshutter-stream.service` + `tools/stream-wrapper.sh`, HTTP 200 auf :8080, 14 JPEG-Frames/8 s ≈ 1,75 fps @ ~540 KB** |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22). |
 | **Offenes Gate** | keines im Basissystem. Betriebs-Feinschliff: ThoTiTiMe-autoconnect-Ausnahme gilt noch (Pi-seitig), bluetoothd-Debug-Override (`-d`) noch aktiv — beides kosmetisch. |
-| **Nächster Schritt** | **Phase A Feld-Messung**: Verifikation des `0x90CA` PTP-Array/Raw-Formats an der echten Hardware mit `skyshutter props`. Danach Phase B (Property write & events) vorbereiten. |
-| **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
+| **Nächster Schritt** | Frame-Rate verstehen/steigern (15-fps-Default wird von Kamera auf ~1,75 limitiert — Round-Trip `0x9201`?) · Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der HW durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". |
+| **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-25 (Phase A API & CLI fertig) |
+| **Stand vom** | 2026-08-25 (Dauer-Stream live) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -111,6 +111,42 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 25.08.2026 (20:57–21:08) — Dauer-Stream live: systemd-Dienst, Zombie-BLE-Falle, 1,75 fps gemessen
+Aufbau:     `skyshutter-stream.service` (systemd, `Restart=always`) ruft
+            `tools/stream-wrapper.sh`: Endlos-Loop aus BLE-Wake
+            (`remote-start.py --register skyshutter --hold 300`, Hintergrund) →
+            10 s warten → Creds aus `/tmp/skyshutter_creds.txt` →
+            `nmcli device wifi connect` ×10 → `ping 192.168.0.10` →
+            `python3 -m skyshutter.cli --host 192.168.0.10 stream --bind
+            0.0.0.0 --http-port 8080`. Verifikation per `curl` auf dem Pi.
+Belegt:     - **Blockade gefunden:** Kamera eingeschaltet, aber kein LE-
+              Advertising sichtbar (`bluetoothctl scan`, 15 s, leer) UND
+              `Connected: yes` für eine alte RPA (`6B:EE:7D:59:8A:08`) am
+              Raspberry — ein hängender LE-Link blockierte die Kamera.
+              Nikon-BLE ist Single-Connection: solange der Pi (Zombie-Link
+              aus abgebrochenem `remote-start`-Lauf) verbunden blieb,
+              advertisierte die Kamera nicht.
+            - **Fix:** `bluetoothctl disconnect` + `remove` der RPA, danach
+              `systemctl restart bluetooth`. Nächster Wrapper-Durchlauf:
+              WLAN-Join 21:05:36 erfolgreich, Stream-Start 21:05:37.
+            - **Stream gemessen:** `HTTP 200` auf `http://127.0.0.1:8080/`
+              (243 B Index), `curl /stream.mjpg` (8 s) = 7.585.067 Bytes,
+              14 × JPEG-Magic `FF D8 FF`, MJPEG-Boundary `--skyshutterframe`
+              korrekt. ⇒ **≈1,75 fps @ ~540 KB/Frame**.
+            - **fps-Default 15 ist Obergrenze, nicht Sollvorgabe:** die Rate
+              limitiert die Kamera bzw. der `0x9201`-Round-Trip (~570 ms/
+              Frame bei dieser Framegröße). Ursache einzeln zu messen
+              (WLAN-Durchsatz vs. Kamera-Antwortzeit).
+Neue Falle: **Abgebrochene `remote-start`-Läufe hinterlassen LE-Zombie-Links,
+            die das Advertising der Kamera dauerhaft unterdrücken.** Der
+            Wrapper killt seinen BLE-Prozess zwar am Loop-Ende, aber ein
+            Crash zwischenzeitlich lässt den Link liegen. Vor jedem
+            Debugging: `bluetoothctl devices Connected` prüfen und alte RPAs
+            (`remove`) entsorgen.
+Folge:      Dauerbetrieb steht. Browser-Zugriff vom PC:
+            `ssh -L 8080:192.168.3.178:8080 -p 2222 thomas@192.168.1.143`
+            → `http://localhost:8080/`.
 
 ### 24.08.2026 (21:28–21:46) — DURCHBRUCH: BOND_OK → Live View auf dem Raspberry
 Aufbau:     Live-Session. Gated Sequenz (Handshake → Inquiry → bt-pair mit
