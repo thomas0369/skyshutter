@@ -112,6 +112,28 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 25.08.2026 (23:49) — Fernauslöser 9207 am laufenden Live View: Aufnahme + Stream koexistieren
+Aufbau:     Testskript `tools/capture_test.py` (eigene PTP-Session; Stream-
+            Dienst dafür gestoppt — Single-Client). ControlMode 1 →
+            StartLiveView → 5 s Frames (Baseline) → `GetObjectHandles`
+            (33 Objekte) → **`9207 InitiateCaptureRecInMedia` mit (0, 0)**
+            (auslöseart 0, Ziel 0 = SD-Karte, wie die App) → Frame-Polling
+            → 8 s Frames → `GetObjectHandles` erneut.
+Belegt:     - **9207 antwortet OK (0x2001) und löst wirklich aus:**
+              Objektzähler 33 → 34, ein neues Bild auf der Karte.
+            - **Live View übersteht die Aufnahme komplett:** erster Frame
+              wieder 0,9 s nach dem Auslöser; danach 17,1 fps (davor 13,6,
+              medianer Frame-Abstand unverändert 53 ms). Kein EndLiveView,
+              kein Re-Setup nötig.
+            - **AP-Falle bestätigt:** Dienst-Stop (PTP-Disconnect) schloss
+              den AP sofort; remote-start über Bond weckt ihn in ~10 s
+              wieder (SSID nach 9 s wieder im Scan).
+Folge:      Der Astro-Workflow ist freigegeben: Stream zum Framing (640×480
+              @ ~15 fps) + Fernauslöser für volle 16-MP-Auflösung auf SD,
+              gleichzeitig, ohne Session-Wechsel. Nächster Baustein:
+              `GetPartialObject`-Download der Aufnahme fortsetzbar in
+              1-MiB-Blöcken (Opcode-Inventar: 0x101B).
+
 ### 25.08.2026 (23:33–23:35) — Dauer-Stream im Fernmodus: 15,2 fps @ 640×480, 30 KB/Frame
 Aufbau:     `skyshutter-stream.service` (systemd, Restart=always) mit dem
             überarbeiteten `tools/stream-wrapper.sh`: BLE-Weck → **Warten auf
