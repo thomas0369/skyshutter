@@ -277,39 +277,45 @@ class PtpIpConnection:
         if self._command is None:
             raise PtpIpError("not connected")
 
-        transaction_id = self.next_transaction_id()
-        phase = DataPhase.OUT if data is not None else DataPhase.NONE_OR_IN
-        send_packet(self._command, encode_operation_request(opcode, transaction_id, params, phase))
-
-        if data is not None:
+        try:
+            transaction_id = self.next_transaction_id()
+            phase = DataPhase.OUT if data is not None else DataPhase.NONE_OR_IN
             send_packet(
-                self._command,
-                Packet(PacketType.START_DATA, struct.pack("<IQ", transaction_id, len(data))),
-            )
-            send_packet(
-                self._command,
-                Packet(PacketType.END_DATA, struct.pack("<I", transaction_id) + data),
+                self._command, encode_operation_request(opcode, transaction_id, params, phase)
             )
 
-        received = bytearray()
-        expected_length: int | None = None
-        while True:
-            packet = read_packet(self._command)
-            if packet.type == PacketType.START_DATA:
-                expected_length = struct.unpack("<Q", packet.payload[4:12])[0]
-            elif packet.type == PacketType.DATA:
-                received += packet.payload[4:]
-            elif packet.type == PacketType.END_DATA:
-                received += packet.payload[4:]
-            elif packet.type == PacketType.OPERATION_RESPONSE:
-                code, _, response_params = decode_operation_response(packet)
-                break
-            elif packet.type == PacketType.PING:
-                send_packet(self._command, Packet(PacketType.PONG))
-            elif packet.type == PacketType.EVENT:
-                log.debug("event on command channel: %s", packet.payload.hex())
-            else:
-                raise PtpIpError(f"unexpected {packet.type_name} during transaction")
+            if data is not None:
+                send_packet(
+                    self._command,
+                    Packet(PacketType.START_DATA, struct.pack("<IQ", transaction_id, len(data))),
+                )
+                send_packet(
+                    self._command,
+                    Packet(PacketType.END_DATA, struct.pack("<I", transaction_id) + data),
+                )
+
+            received = bytearray()
+            expected_length: int | None = None
+            while True:
+                packet = read_packet(self._command)
+                if packet.type == PacketType.START_DATA:
+                    expected_length = struct.unpack("<Q", packet.payload[4:12])[0]
+                elif packet.type == PacketType.DATA:
+                    received += packet.payload[4:]
+                elif packet.type == PacketType.END_DATA:
+                    received += packet.payload[4:]
+                elif packet.type == PacketType.OPERATION_RESPONSE:
+                    code, _, response_params = decode_operation_response(packet)
+                    break
+                elif packet.type == PacketType.PING:
+                    send_packet(self._command, Packet(PacketType.PONG))
+                elif packet.type == PacketType.EVENT:
+                    log.debug("event on command channel: %s", packet.payload.hex())
+                else:
+                    raise PtpIpError(f"unexpected {packet.type_name} during transaction")
+        except (OSError, PtpIpError):
+            self.close()
+            raise
 
         if expected_length is not None and len(received) != expected_length:
             log.warning(
@@ -344,9 +350,7 @@ class PtpIpConnection:
         reopening. Doing anything else here turns a harmless reconnect into a
         failure.
         """
-        result = self.transaction(
-            OperationCode.OPEN_SESSION, (session_id,), raise_on_error=False
-        )
+        result = self.transaction(OperationCode.OPEN_SESSION, (session_id,), raise_on_error=False)
         if not result.ok and result.response_code != ResponseCode.SESSION_ALREADY_OPEN:
             raise PtpError(result.response_code, OperationCode.OPEN_SESSION)
 
