@@ -1,5 +1,5 @@
 #!/bin/bash
-# skyshutter stream-wrapper: hält die Verbindung zur Nikon P1100 und den Stream am Leben
+# skyshutter stream-wrapper: haelt die Verbindung zur Nikon P1100 und den Stream am Leben
 
 DIR="/home/thomas/projekte_hardware/skyshutter"
 VENV="$DIR/.venv"
@@ -10,25 +10,42 @@ CAMERA_IP="192.168.0.10"
 echo "=== skyshutter stream-wrapper start ==="
 
 while true; do
-    echo "1. Wecke Kamera über BLE (remote-start.py)..."
-    # Führe remote-start.py im Vordergrund aus, um den AP zu triggern und Creds zu schreiben.
-    # --hold 300 hält den BLE-Link für 5 Minuten, während wir streamen.
+    CYCLE_START=$(date +%s)
+
+    echo "1. Wecke Kamera ueber BLE (remote-start.py)..."
+    # --hold 300 haelt den BLE-Link fuer 5 Minuten, während wir streamen.
     $PYTHON "$DIR/tools/remote-start.py" --register skyshutter --hold 300 > /tmp/remote_start_run.log 2>&1 &
     PID_BLE=$!
 
-    # Warte kurz, bis remote-start die Zugangsdaten generiert
-    sleep 10
+    # Warte, bis remote-start DIESEN Lauf mit frischen Creds beliefert hat
+    # (die Datei kann von einem frueheren Lauf stammen -- Passwort rotiert je Session).
+    # BLE-Handshake dauert bis ~60 s; alte Creds -> Join scheitert garantiert.
+    CREDS_READY=false
+    for i in $(seq 1 45); do
+        if [ -f "$CREDS_FILE" ]; then
+            MTIME=$(stat -c %Y "$CREDS_FILE" 2>/dev/null || echo 0)
+            if [ "$MTIME" -ge "$CYCLE_START" ]; then
+                CREDS_READY=true
+                break
+            fi
+        fi
+        sleep 2
+    done
 
-    if [ -f "$CREDS_FILE" ]; then
-        SSID=$(sed -n '1p' "$CREDS_FILE")
-        PASS=$(sed -n '2p' "$CREDS_FILE")
-        echo "2. Verbinde mit WLAN SSID: $SSID ..."
-        
-        # Versuche 10-mal, das WLAN zu verbinden
+    if [ "$CREDS_READY" = true ]; then
+        echo "2. Verbinde mit WLAN (Creds frisch von $(date -d @$MTIME '+%H:%M:%S')) ..."
+
+        # Join-Versuche: Creds JE VERSUCH neu lesen (rotieren ggf. nach), SSID muss sichtbar sein.
         CONNECTED=false
-        for i in {1..10}; do
-            if nmcli device wifi connect "$SSID" password "$PASS"; then
-                echo "WLAN erfolgreich verbunden."
+        for i in $(seq 1 20); do
+            SSID=$(sed -n '1p' "$CREDS_FILE")
+            PASS=$(sed -n '2p' "$CREDS_FILE")
+            if [ -z "$SSID" ] || [ -z "$PASS" ]; then
+                sleep 3
+                continue
+            fi
+            if nmcli device wifi connect "$SSID" password "$PASS" >/dev/null 2>&1; then
+                echo "WLAN erfolgreich verbunden (Versuch $i)."
                 CONNECTED=true
                 break
             fi
@@ -36,10 +53,10 @@ while true; do
         done
 
         if [ "$CONNECTED" = true ]; then
-            # Prüfe, ob wir die Kamera pingen können
+            # Pruefe, ob wir die Kamera pingen koennen
             if ping -c 2 "$CAMERA_IP" > /dev/null 2>&1; then
                 echo "3. Starte skyshutter stream auf Port 8080 (remote mode)..."
-                # Starte den Stream. Wenn er abstürzt, bricht die Schleife ab und wir fangen von vorne an.
+                # Starte den Stream. Wenn er abstuerzt, bricht die Schleife ab und wir fangen von vorne an.
                 $PYTHON -m skyshutter.cli --host "$CAMERA_IP" stream --bind 0.0.0.0 --http-port 8080 --remote --fps 25
                 echo "Stream-Server beendet."
             else
@@ -49,15 +66,15 @@ while true; do
             echo "WLAN-Verbindung fehlgeschlagen."
         fi
     else
-        echo "Keine Zugangsdaten in $CREDS_FILE gefunden (BLE Handshake fehlgeschlagen?)."
+        echo "Keine frischen Zugangsdaten in $CREDS_FILE (BLE Handshake fehlgeschlagen?)."
     fi
 
-    # Aufräumen: Töte den BLE-Hold-Prozess, falls er noch läuft
+    # Aufraeumen: Toete den BLE-Hold-Prozess, falls er noch laeuft
     if kill -0 $PID_BLE > /dev/null 2>&1; then
-        echo "Töte BLE-Hold-Prozess ($PID_BLE)..."
+        echo "Toete BLE-Hold-Prozess ($PID_BLE)..."
         kill -9 $PID_BLE
     fi
 
-    echo "Warte 5 Sekunden vor dem nächsten Versuch..."
+    echo "Warte 5 Sekunden vor dem naechsten Versuch..."
     sleep 5
 done
