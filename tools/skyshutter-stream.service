@@ -1,0 +1,16 @@
+[Unit]
+Description=skyshutter MJPEG stream server for Nikon Coolpix P1100
+After=network.target bluetooth.target
+
+[Service]
+Type=simple
+User=thomas
+WorkingDirectory=/home/thomas/projekte_hardware/skyshutter
+ExecStart=/bin/bash /home/thomas/projekte_hardware/skyshutter/tools/stream-wrapper.sh
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

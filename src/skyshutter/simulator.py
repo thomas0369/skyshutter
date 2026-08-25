@@ -290,10 +290,10 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
                 desc = PropertyDesc(
                     code=code,
                     data_type=DataType.UINT32,
-                    access=int(AccessCapability.READ) | int(AccessCapability.WRITE),
-                    form_flag=FormFlag.DEFAULT,
-                    data_size=4,
+                    access=AccessCapability.GET_SET,
+                    form_flag=FormFlag.NONE,
                     default_value=self.properties[code],
+                    current_value=self.properties[code],
                 )
                 return ResponseCode.OK, desc.pack()
             return ResponseCode.OPERATION_NOT_SUPPORTED, b""

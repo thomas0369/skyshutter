@@ -20,10 +20,10 @@ def test_property_desc_round_trips() -> None:
     desc = PropertyDesc(
         code=0x4001,
         data_type=DataType.UINT32,
-        access=int(AccessCapability.READ) | int(AccessCapability.WRITE),
-        form_flag=FormFlag.DEFAULT,
-        data_size=4,
+        access=AccessCapability.GET_SET,
+        form_flag=FormFlag.NONE,
         default_value=42,
+        current_value=42,
     )
     assert PropertyDesc.parse(desc.pack()) == desc
 

@@ -210,15 +210,9 @@ def cmd_info(args: argparse.Namespace) -> int:
 
 
 def _access_name(access: int) -> str:
-    r = bool(access & AccessCapability.READ)
-    w = bool(access & AccessCapability.WRITE)
-    if r and w:
+    if access == AccessCapability.GET_SET:
         return "read/write"
-    if r:
-        return "read-only"
-    if w:
-        return "write-only"
-    return "none"
+    return "read-only"
 
 
 def _gib(n: int) -> str:

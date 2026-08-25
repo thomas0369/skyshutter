@@ -254,19 +254,46 @@ class DataType(IntEnum):
 
 
 class AccessCapability(IntEnum):
-    """Bitmask for the ``access_capability`` field of a property descriptor."""
+    """GetSet capability of a property descriptor (ISO 15740)."""
 
-    READ = 0x0001
-    WRITE = 0x0002
+    GET = 0x00
+    GET_SET = 0x01
 
 
 class FormFlag(IntEnum):
-    """Bitmask for the ``form_flag`` field of a property descriptor."""
+    """Form flag of a property descriptor (ISO 15740)."""
 
-    DEFAULT = 0x0001
-    RANGE = 0x0002
-    ENUMERATION = 0x0004
-    TEXT = 0x0008
+    NONE = 0x00
+    RANGE = 0x01
+    ENUMERATION = 0x02
+
+
+def _read_val(u: Unpacker, dtype: int) -> int | str:
+    if dtype in (DataType.UINT8, DataType.INT8):
+        return u.uint8()
+    if dtype in (DataType.UINT16, DataType.INT16):
+        return u.uint16()
+    if dtype in (DataType.UINT32, DataType.INT32):
+        return u.uint32()
+    if dtype in (DataType.UINT64, DataType.INT64):
+        return u.uint64()
+    if dtype == DataType.STRING:
+        return u.string()
+    return 0
+
+
+def _pack_val(dtype: int, val: int | str) -> bytes:
+    if dtype in (DataType.UINT8, DataType.INT8):
+        return struct.pack("<B", val)
+    if dtype in (DataType.UINT16, DataType.INT16):
+        return struct.pack("<H", val)
+    if dtype in (DataType.UINT32, DataType.INT32):
+        return struct.pack("<I", val)
+    if dtype in (DataType.UINT64, DataType.INT64):
+        return struct.pack("<Q", val)
+    if dtype == DataType.STRING:
+        return pack_string(val)  # type: ignore[arg-type]
+    return b""
 
 
 @dataclass
@@ -277,67 +304,60 @@ class PropertyDesc:
     data_type: int
     access: int
     form_flag: int = 0
-    data_size: int = 0
-    default_value: int | None = None
-    minimum: int | None = None
-    maximum: int | None = None
-    step: int | None = None
-    enumeration: list[int] = field(default_factory=list)
-    text: str = ""
+    default_value: int | str = 0
+    current_value: int | str = 0
+    minimum: int | str = 0
+    maximum: int | str = 0
+    step: int | str = 0
+    enumeration: list[int | str] = field(default_factory=list)
 
     @property
     def readable(self) -> bool:
-        return bool(self.access & AccessCapability.READ)
+        return True
 
     @property
     def writable(self) -> bool:
-        return bool(self.access & AccessCapability.WRITE)
+        return self.access == AccessCapability.GET_SET
 
     @classmethod
     def parse(cls, data: bytes) -> PropertyDesc:
         u = Unpacker(data)
+        code = u.uint16()
+        dtype = u.uint16()
+        access = u.uint8()
+        default_val = _read_val(u, dtype)
+        current_val = _read_val(u, dtype)
+        form_flag = u.uint8()
+
         desc = cls(
-            code=u.uint16(),
-            data_type=u.uint16(),
-            access=u.uint16(),
-            form_flag=u.uint32(),
-            data_size=u.uint32(),
+            code=code,
+            data_type=dtype,
+            access=access,
+            form_flag=form_flag,
+            default_value=default_val,
+            current_value=current_val,
         )
-        if desc.form_flag & FormFlag.DEFAULT:
-            desc.default_value = u.uint32()
-        if desc.form_flag & FormFlag.RANGE:
-            desc.minimum = u.uint32()
-            desc.maximum = u.uint32()
-            desc.step = u.uint32()
-        if desc.form_flag & FormFlag.ENUMERATION:
-            count = u.uint32()
-            desc.enumeration = [u.uint32() for _ in range(count)]
-        if desc.form_flag & FormFlag.TEXT and u.remaining > 0:
-            desc.text = u.string()
+        if form_flag == FormFlag.RANGE:
+            desc.minimum = _read_val(u, dtype)
+            desc.maximum = _read_val(u, dtype)
+            desc.step = _read_val(u, dtype)
+        elif form_flag == FormFlag.ENUMERATION:
+            count = u.uint16()
+            desc.enumeration = [_read_val(u, dtype) for _ in range(count)]
         return desc
 
     def pack(self) -> bytes:
-        form = self.form_flag
-        size = 0
-        if form & FormFlag.DEFAULT:
-            size += 4
-        if form & FormFlag.RANGE:
-            size += 12
-        if form & FormFlag.ENUMERATION:
-            size += 4 + 4 * len(self.enumeration)
-        if form & FormFlag.TEXT:
-            size += len(pack_string(self.text))
-        out = struct.pack("<HHHI", self.code, self.data_type, self.access, form)
-        out += struct.pack("<I", size)
-        if form & FormFlag.DEFAULT:
-            out += struct.pack("<I", self.default_value or 0)
-        if form & FormFlag.RANGE:
-            out += struct.pack("<III", self.minimum or 0, self.maximum or 0, self.step or 0)
-        if form & FormFlag.ENUMERATION:
-            out += struct.pack("<I", len(self.enumeration))
-            out += b"".join(struct.pack("<I", v) for v in self.enumeration)
-        if form & FormFlag.TEXT:
-            out += pack_string(self.text)
+        out = struct.pack("<HHB", self.code, self.data_type, self.access)
+        out += _pack_val(self.data_type, self.default_value)
+        out += _pack_val(self.data_type, self.current_value)
+        out += struct.pack("<B", self.form_flag)
+        if self.form_flag == FormFlag.RANGE:
+            out += _pack_val(self.data_type, self.minimum)
+            out += _pack_val(self.data_type, self.maximum)
+            out += _pack_val(self.data_type, self.step)
+        elif self.form_flag == FormFlag.ENUMERATION:
+            out += struct.pack("<H", len(self.enumeration))
+            out += b"".join(_pack_val(self.data_type, v) for v in self.enumeration)
         return out
 
 
