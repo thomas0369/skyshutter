@@ -144,9 +144,13 @@ Neue Falle: **Abgebrochene `remote-start`-Läufe hinterlassen LE-Zombie-Links,
             Crash zwischenzeitlich lässt den Link liegen. Vor jedem
             Debugging: `bluetoothctl devices Connected` prüfen und alte RPAs
             (`remove`) entsorgen.
-Folge:      Dauerbetrieb steht. Browser-Zugriff vom PC:
-            `ssh -L 8080:192.168.3.178:8080 -p 2222 thomas@192.168.1.143`
-            → `http://localhost:8080/`.
+Folge:      Dauerbetrieb steht. Browser-Zugriff vom PC dauerhaft ohne Tunnel:
+            **`http://192.168.1.143:8080/`** (Mango-DNAT `rec-stream`,
+            8080→192.168.3.178:8080, uci-persistent, 25.08. analog zur
+            bestehenden `rec-ssh`-Regel angelegt). Mango-Zugang: WSL-Key
+            liegt auf dem Mango (`ssh root@192.168.1.143`, WAN-SSH :22);
+            das Mesh-Admin-PW `Seaweed_1234` gilt dort NICHT (gemessen,
+            Permission denied).
 
 ### 24.08.2026 (21:28–21:46) — DURCHBRUCH: BOND_OK → Live View auf dem Raspberry
 Aufbau:     Live-Session. Gated Sequenz (Handshake → Inquiry → bt-pair mit
