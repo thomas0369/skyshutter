@@ -23,16 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Fernmodus im Dauerbetrieb — `skyshutter-stream.service` liefert 640×480 @ 15 fps** (25.08. 23:33–23:35, gemessen: 183 Frames/12 s = 15,2 fps, 30-KB-Frames) |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props`) · **Dauer-Stream systemd im Fernmodus: 15 fps statt 1,85** |
+| **Phase** | **Belichtungs-Steuerung implementiert (simuliert), HW-Write-Validierung wartet auf OK** — `set`-CLI (shutter/iso/aperture/ev/program/drive/afarea), `shoot --get`, `download --preview` (8 MP via 0x9522), `props --dump/--diff` (26.08.) |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **typisierte Belichtungs-API + set-CLI** (171 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | Dauerlauf-Stabilität über Stunden (AP-Lebensdauer bei gehaltenem BLE-Link? Kamera-Auto-Sleep im Fernmodus?) · hochauflösender Modus parallel (Fernmodus aus ↔ 540-KB-Frames) als CLI-Option. |
-| **Nächster Schritt** | Stream über Nacht laufen lassen, morgens Journal auswerten (Wiederverbindungs-Zyklen?) · `stream --remote` mit fps-Messmodus · Fernsteuer-Liste ([referenz.md](referenz.md)) im Fernmodus durchmessen — Zoom/Belichtung sind im App-Modus ggf. freigegeben. |
+| **Offenes Gate** | **Property-Writes (SetDevicePropValue) nie an der HW gelaufen** — Formate aus ISO 15740 + App-Analyse, brauchen ausdrückliches OK (Playbook §7). Danach: Zoom `0x9016`-Wirkung messen. |
+| **Nächster Schritt** | Nach OK: stille Write-Sequenz (`set program M` → `set iso 800` → `set shutter 1/30` → zurück auf Auto) mit `props --dump` vor/nach jedem Write als Gegenprobe; `props --diff` auswerten. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-25 (Dauer-Stream live) |
+| **Stand vom** | 2026-08-26 (Belichtungs-CLI fertig, HW-Test ausstehend) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,

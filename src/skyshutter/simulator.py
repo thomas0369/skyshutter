@@ -60,6 +60,7 @@ SIMULATED_OPERATIONS = [
     OperationCode.GET_DEVICE_PROP_VALUE,
     OperationCode.SET_DEVICE_PROP_VALUE,
     OperationCode.GET_PARTIAL_OBJECT,
+    NikonOperation.GET_SPECIFIC_SIZE_PARTIAL_OBJECT,
     NikonOperation.CAPTURE,
     NikonOperation.AF_DRIVE,
     # Measured 23.08.2026: the real camera offers only the newer event poll,
@@ -98,14 +99,23 @@ def _live_view_header(jpeg_length: int) -> bytes:
 
 def _placeholder_jpeg() -> bytes:
     """A JPEG frame if Pillow is around, otherwise a marker-framed stand-in."""
+    return _sized_jpeg((640, 480), b"skyshutter simulated frame")
+
+
+def _preview_jpeg() -> bytes:
+    """The 8 MP stand-in: same markers, visibly smaller, distinct body."""
+    return _sized_jpeg((320, 240), b"simulated preview")
+
+
+def _sized_jpeg(size: tuple[int, int], marker_text: bytes) -> bytes:
     try:
         import io
 
         from PIL import Image, ImageDraw
     except ImportError:
-        return b"\xff\xd8\xff" + b"skyshutter simulated frame" + b"\xff\xd9"
-    image = Image.new("RGB", (640, 480), (24, 24, 32))
-    ImageDraw.Draw(image).text((20, 20), "skyshutter simulator", fill=(220, 220, 220))
+        return b"\xff\xd8\xff" + marker_text + b"\xff\xd9"
+    image = Image.new("RGB", size, (24, 24, 32))
+    ImageDraw.Draw(image).text((20, 20), marker_text.decode(), fill=(220, 220, 220))
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG")
     return buffer.getvalue()
@@ -299,6 +309,11 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
             return ResponseCode.OK, _live_view_header(len(self.frame)) + self.frame
         if opcode == NikonOperation.ZOOM_CONTROL:
             return ResponseCode.OK, b""
+        if opcode == NikonOperation.GET_SPECIFIC_SIZE_PARTIAL_OBJECT:
+            handle = params[0] if params else 0
+            if handle in self.objects:
+                return ResponseCode.OK, _preview_jpeg()
+            return ResponseCode.INVALID_OBJECT_HANDLE, b""
         if opcode in (
             OperationCode.INITIATE_CAPTURE,
             NikonOperation.CAPTURE,

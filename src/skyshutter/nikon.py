@@ -651,6 +651,20 @@ class NikonCamera:
             received += result.data
         return bytes(received)
 
+    def preview(self, handle: int, size_code: int = 4) -> bytes:
+        """Fetch an object as a downscaled preview (vendor op 0x9522).
+
+        Takes ``(handle, size_code, 0)``; size code 4 means 8 MP on this
+        camera (referenz.md). The vendor app prefers this over full
+        downloads while browsing: a quarter of the pixels for a quarter
+        of the airtime on the camera's own slow access point.
+        """
+        self._require(NikonOperation.GET_SPECIFIC_SIZE_PARTIAL_OBJECT, "preview")
+        result = self.connection.transaction(
+            NikonOperation.GET_SPECIFIC_SIZE_PARTIAL_OBJECT, (handle, size_code, 0)
+        )
+        return result.data
+
     # -- live view ---------------------------------------------------------
 
     def start_live_view(self, attempts: int = 10, pause: float = 0.5) -> None:

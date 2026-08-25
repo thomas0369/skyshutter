@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -109,6 +110,73 @@ def test_set_writes_exposure_settings(
     assert camera_server.properties[StandardProperty.STILL_CAPTURE_MODE] == _s.pack(
         "<I", int(DriveMode.BURST)
     )
+
+
+def test_props_dump_then_diff_shows_changed_property(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    before = tmp_path / "before.json"
+    after = tmp_path / "after.json"
+    assert main(_args(camera_address, "props", "--dump", str(before))) == 0
+    assert main(_args(camera_address, "set", "iso", "1600")) == 0
+    assert main(_args(camera_address, "props", "--dump", str(after))) == 0
+
+    dump = json.loads(before.read_text())
+    assert "properties" in dump and "storage" in dump
+
+    # The diff runs offline -- no camera -- and names exactly the change.
+    rc = main(["props", "--diff", str(before), str(after)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0x500F" in out and "current" in out
+
+
+def test_props_diff_without_changes_says_so(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    one = tmp_path / "one.json"
+    two = tmp_path / "two.json"
+    payload = {"properties": {"0xD100": {"current": 24, "default": 24}}}
+    one.write_text(json.dumps(payload))
+    two.write_text(json.dumps(payload))
+    assert main(["props", "--diff", str(one), str(two)]) == 0
+    assert "no property changes" in capsys.readouterr().out
+
+
+def test_shoot_get_downloads_only_new_images(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # One image exists already; --get must fetch only the fresh one.
+    assert main(_args(camera_address, "shoot", "-n", "1")) == 0
+    assert main(_args(camera_address, "shoot", "-n", "1", "--get", "-o", str(tmp_path))) == 0
+    capsys.readouterr()
+    files = list(tmp_path.glob("DSC_*.JPG"))
+    assert len(files) == 1
+
+
+def test_download_preview_fetches_smaller_object(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+    tmp_path: Path,
+) -> None:
+    assert main(_args(camera_address, "shoot", "-n", "1")) == 0
+    assert (
+        main(_args(camera_address, "download", "--last", "1", "--preview", "-o", str(tmp_path)))
+        == 0
+    )
+    previews = list(tmp_path.glob("*_8mp.jpg"))
+    assert len(previews) == 1
+    data = previews[0].read_bytes()
+    assert data[:2] == b"\xff\xd8" and data[-2:] == b"\xff\xd9"
+    # The preview must be genuinely smaller than the stored full frame.
+    full = next(iter(camera_server.objects.values()))
+    assert len(data) < len(full)
 
 
 def test_liveview_writes_frames_to_disk(

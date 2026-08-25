@@ -75,17 +75,39 @@ def build_parser() -> argparse.ArgumentParser:
     _subparser(sub, "info", "dump DeviceInfo, including supported operations")
     props = _subparser(sub, "props", "list the device properties and storage")
     props.add_argument("--json", action="store_true", help="print as JSON")
+    props.add_argument(
+        "--dump",
+        nargs="?",
+        const="auto",
+        metavar="FILE",
+        help="write every property value as JSON (default name: props-<timestamp>.json)",
+    )
+    props.add_argument(
+        "--diff",
+        nargs=2,
+        metavar=("BEFORE", "AFTER"),
+        help="compare two dumps offline -- no camera connection needed",
+    )
     _subparser(sub, "events", "poll the camera event queue until interrupted")
 
     shoot = _subparser(sub, "shoot", "release the shutter")
     shoot.add_argument("--af", action="store_true", help="autofocus before the exposure")
     shoot.add_argument("-n", "--count", type=int, default=1)
     shoot.add_argument("--interval", type=float, default=0.0, help="seconds between exposures")
+    shoot.add_argument("--get", action="store_true", help="download the images taken by this run")
+    shoot.add_argument(
+        "-o", "--out", type=Path, default=Path("."), help="output directory with --get"
+    )
 
     download = _subparser(sub, "download", "fetch images from the card via GetPartialObject")
     download.add_argument("--last", type=int, default=1, help="how many of the newest images")
     download.add_argument("-o", "--out", type=Path, default=Path("."), help="output directory")
     download.add_argument("--list", action="store_true", help="only list objects, fetch nothing")
+    download.add_argument(
+        "--preview",
+        action="store_true",
+        help="fetch the 8 MP preview (0x9522) instead of the full file",
+    )
 
     set_parser = _subparser(sub, "set", "change an exposure setting on the camera")
     set_parser.add_argument(
@@ -237,7 +259,58 @@ def _gib(n: int) -> str:
     return f"{n / 1024**3:.1f} GiB"
 
 
+def _prop_snapshot(camera: NikonCamera) -> dict:
+    """Everything a dump records: values, descriptors, storage, time."""
+    props = camera.properties()
+    return {
+        "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "properties": {
+            f"0x{code:04X}": {
+                "data_type": f"0x{d.data_type:04X}",
+                "access": _access_name(d.access),
+                "default": d.default_value,
+                "current": d.current_value,
+                "min": d.minimum,
+                "max": d.maximum,
+                "step": d.step,
+                "values": d.enumeration,
+            }
+            for code, d in sorted(props.items())
+        },
+        "storage": {
+            f"0x{sid:08X}": {
+                "max_capacity": s.max_capacity,
+                "free_space_bytes": s.free_space_bytes,
+                "free_space_objects": s.free_space_objects,
+            }
+            for sid, s in ((sid, camera.storage_info(sid)) for sid in camera.storage_ids())
+        },
+    }
+
+
+def _diff_snapshots(before_path: Path, after_path: Path) -> int:
+    before = json.loads(before_path.read_text())
+    after = json.loads(after_path.read_text())
+    codes = sorted(set(before.get("properties", {})) | set(after.get("properties", {})))
+    changes = []
+    for code in codes:
+        b = before.get("properties", {}).get(code, {})
+        a = after.get("properties", {}).get(code, {})
+        for field in ("current", "default"):
+            if b.get(field) != a.get(field):
+                changes.append((code, field, b.get(field), a.get(field)))
+    if not changes:
+        print("no property changes")
+        return 0
+    print(f"{len(changes)} change(s):")
+    for code, field, old, new in changes:
+        print(f"  {code}  {field}: {old!r} -> {new!r}")
+    return 0
+
+
 def cmd_props(args: argparse.Namespace) -> int:
+    if args.diff:
+        return _diff_snapshots(Path(args.diff[0]), Path(args.diff[1]))
     with NikonCamera.open(
         _resolve_host(args),
         port=args.port,
@@ -245,6 +318,16 @@ def cmd_props(args: argparse.Namespace) -> int:
         friendly_name=config.client_name(args.name),
         timeout=args.timeout,
     ) as camera:
+        if args.dump:
+            snapshot = _prop_snapshot(camera)
+            path = (
+                Path(time.strftime("props-%Y%m%d-%H%M%S.json"))
+                if args.dump == "auto"
+                else Path(args.dump)
+            )
+            path.write_text(json.dumps(snapshot, indent=2))
+            print(f"{len(snapshot['properties'])} properties -> {path}")
+            return 0
         props = camera.properties()
         storage = {sid: camera.storage_info(sid) for sid in camera.storage_ids()}
 
@@ -304,6 +387,19 @@ def cmd_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_objects(camera: NikonCamera, infos: list, out: Path, preview: bool = False) -> None:
+    out.mkdir(parents=True, exist_ok=True)
+    for info in infos:
+        if preview:
+            data = camera.preview(info.handle)
+            path = out / f"{info.filename.rsplit('.', 1)[0]}_8mp.jpg"
+        else:
+            data = camera.download(info.handle, info.compressed_size)
+            path = out / info.filename
+        path.write_bytes(data)
+        print(f"{info.filename}: {len(data) / 1e6:.1f} MB -> {path}")
+
+
 def cmd_shoot(args: argparse.Namespace) -> int:
     with NikonCamera.open(
         _resolve_host(args),
@@ -312,6 +408,7 @@ def cmd_shoot(args: argparse.Namespace) -> int:
         friendly_name=config.client_name(args.name),
         timeout=args.timeout,
     ) as camera:
+        before = set(camera.object_handles()) if args.get else set()
         for index in range(args.count):
             if args.af:
                 camera.autofocus()
@@ -319,6 +416,12 @@ def cmd_shoot(args: argparse.Namespace) -> int:
             print(f"exposure {index + 1}/{args.count} triggered")
             if args.interval and index + 1 < args.count:
                 time.sleep(args.interval)
+        if args.get:
+            fresh = [h for h in camera.object_handles() if h not in before]
+            if not fresh:
+                print("no new objects appeared on the card")
+                return 0
+            _fetch_objects(camera, [camera.object_info(h) for h in fresh], args.out)
     return 0
 
 
@@ -339,12 +442,7 @@ def cmd_download(args: argparse.Namespace) -> int:
             for info in infos:
                 print(f"{info.handle:#010x}  {info.compressed_size:>10} B  {info.filename}")
             return 0
-        for info in infos[-args.last :]:
-            data = camera.download(info.handle, info.compressed_size)
-            args.out.mkdir(parents=True, exist_ok=True)
-            path = args.out / info.filename
-            path.write_bytes(data)
-            print(f"{info.filename}: {len(data) / 1e6:.1f} MB -> {path}")
+        _fetch_objects(camera, infos[-args.last :], args.out, preview=args.preview)
     return 0
 
 
