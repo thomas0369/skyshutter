@@ -23,16 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Belichtungs-Steuerung implementiert (simuliert), HW-Write-Validierung wartet auf OK** — `set`-CLI (shutter/iso/aperture/ev/program/drive/afarea), `shoot --get`, `download --preview` (8 MP via 0x9522), `props --dump/--diff`, `bundle` (26.08.) |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **typisierte Belichtungs-API + set-CLI** (171 Tests) |
+| **Phase** | **Lesende HW-Validierung der Belichtungs-API durch** — alle typisierten Getter an der echten Kamera gemessen; 0x9522-Preview-Matrix vermessen; **Write-Sequenz wartet nur noch auf OK** |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **typisierte Belichtungs-Getter an HW validiert** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | **Property-Writes (SetDevicePropValue) nie an der HW gelaufen** — Formate aus ISO 15740 + App-Analyse, brauchen ausdrückliches OK (Playbook §7). Danach: Zoom `0x9016`-Wirkung messen. |
-| **Nächster Schritt** | Nach OK: stille Write-Sequenz (`set program M` → `set iso 800` → `set shutter 1/30` → zurück auf Auto) mit `props --dump` vor/nach jedem Write als Gegenprobe; `props --diff` auswerten. |
+| **Offenes Gate** | **Property-Writes (SetDevicePropValue) nie an der HW gelaufen** — Formate jetzt aber komplett messbasiert (s. 26.08. unten); brauchen ausdrückliches OK (Playbook §7). Danach: Zoom `0x9016`-Wirkung messen. |
+| **Nächster Schritt** | Nach OK: stille Write-Sequenz (`set program M` → `set iso 800` → `set shutter 1/30` → zurück auf `program auto`) mit `props --dump` vor/nach jedem Write als Gegenprobe; `props --diff` auswerten. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-26 (Belichtungs-CLI fertig, HW-Test ausstehend) |
+| **Stand vom** | 2026-08-26 (Reader + 0x9522 an HW gemessen, Write-Gate offen) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -111,6 +111,44 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Reader-Validierung + 0x9522) — Belichtungs-Getter an der HW: alle Formate bestätigt, 0x9522 vermessen
+Aufbau:     Drei Weckzyklen (AP schloss nach jedem Disconnect); pro Zyklus
+            EIN Python-Prozess, EINE PTP/IP-Verbindung ( `/tmp/hw_probe9522.py`
+            auf dem Pi). Skripte per SSH-Heredoc, Auswertung mit SOF-Parser
+            (strukturell, kein Pillow).
+Belegt:     - **Alle typisierten Getter laufen an der HW:** Verschluss 1/100 s,
+              ISO 0 (= Auto!), f/7.1, Programm 0x8010, Einzelbild, EV 0.0,
+              Brennweite 3500 (mm equiv.). 34 Objekte auf Karte.
+            - **0x9522-Größenmatrix (Parameterprobe 0–7, lesender GET):**
+              Code 1 → 343.341 B OK; Code 3 → identische 343.341 B;
+              Code 2 → NO_THUMBNAIL_PRESENT (0x2010); 0, 4–7 →
+              INVALID_PARAMETER (0x201D).
+            - **Beide liefernden Codes = 1440×1080 (SOF)** — die „8 MP"-
+              These der App-Analyse ist an dieser Kamera **widerlegt**.
+              CLI-Suffix ehrlich zu `_preview.jpg` geändert, Default
+              size_code=1.
+            - **Verschlussformat geklärt:** Value-Dataset 4 Bytes als
+              **u32-Paar** — Zähler im hohen, Nenner im tiefen Halbwort.
+              cur 0x000A03E8 → (10, 1000) = 1/100 s ✓; desc-default
+              0x0001003C → (1, 60) = 1/60 s ✓ (zwei unabhängige Werte
+              bestätigen die Halbwort-Zuordnung). Desc deklariert INT64,
+              der Wert passt in 4. Setter schreibt jetzt `<I`-Paar; Bulb
+              = 0xFFFFFFFF wie vorher.
+            - **Programm-Enum erweitert:** Kamera stand in 0x8010 (erster
+              Lauf: ValueError des alten Enums). 0x8010 ist Werkszustand
+              → als NIKON_AUTO benannt (Name inferiert); 0x8016/0x8018/
+              0x80D0/0x80D1 bleiben numerisch dokumentiert. CLI versteht
+              `set program auto`.
+Folge:      Getter-Formate sind **messbasiert** (u16/i16/u32-Paar); Simulator
+              und Tests spiegeln alle gemessenen Breiten und die 0x9522-
+              Matrix. Für die Write-Sequenz fehlt nur noch das OK.
+Fallen:     - `pkill -f "remote-star[t].py"` im SELBEN SSH-Kommando wie der
+              Neustart tötet die Shell wieder (auch ohne sichtbares
+              `remote-start`-Literal: `nohup … tools/remote-start.py` matcht).
+              Kill und Start strikt in getrennten SSH-Calls.
+            - Erster Preview-Versuch mit size_code=4 → INVALID_PARAMETER:
+              der Code stammte aus der App-Analyse, nicht aus einer Messung.
 
 ### 26.08.2026 (00:12) — Download-Pfad an der HW: 16-MP-Foto bytegenau auf dem Pi
 Aufbau:     `skyshutter download --list` / `--last 1` (neue CLI, committet).
@@ -1879,6 +1917,8 @@ Was wir ausgeschlossen haben — damit es niemand erneut versucht.
 
 | Datum | Annahme | Womit widerlegt |
 |---|---|---|
+| 26.08.2026 | 0x9522 liefert mit size_code 4 ein „8-MP-Preview" (App-Analyse) | Parameterprobe 0–7 an der HW (26.08., Messungen oben): 4 → INVALID_PARAMETER 0x201D. Liefern tun nur 1 und 3 — beide dasselbe **1440×1080**-JPEG (343.341 B, SOF-geprüft). |
+| 26.08.2026 | Verschluss 0xD100 reist als 8-Byte-Bruch (Zähler, Nenner) wie das Desc-INT64 nahelegt | Value-Dataset an der HW ist 4 Bytes: u32-Paar, Zähler hoch / Nenner tief. cur 0x000A03E8 → 10/1000 = 1/100 s, desc-def 0x0001003C → 1/60 s — beide nur unter dieser Zuordnung sinnvoll. |
 | 22.08.2026 | Der HCI-Snoop-Schalter in den Entwickleroptionen liefert auf diesem Handy einen brauchbaren Mitschnitt | Aufzeichnung war aktiv (`dumpsys bluetooth_manager` → `sSnoopLogSettingAtEnable = FULL`), der Bugreport enthält 310 btsnoop-Dateien unter `FS/data/misc/bluetooth/logs/bthci/CsLog_*/BT_HCI_*.cfa` — **alle exakt 16 Byte, also nur Header ohne ein einziges Paket.** Der Hersteller filtert über `INIT_gd_hal_snoop_logger_filtering=true`. Beide Wege, das abzuschalten, sind ohne Root gesperrt: `device_config put` scheitert mit `SecurityException: must add flag to the allowlist`, `setprop persist.bluetooth.btsnoopenable` mit `Failed to set property`. |
 | 23.08.2026 | `0x01` auf `0x2005` startet den AP **allein** | Als vollständig gekoppelter Client zweimal geschrieben (einmal mit vorherigem `0x2004`-Lesen wie die App, einmal mit 60 s gehaltener Verbindung). Schreibzugriff jedes Mal `accepted`, aber kein `P1100`-Netz im `netsh`-Scan. `0x01` ist notwendig (steht so im Herstellercode), aber nicht hinreichend — es fehlt ein weiterer Schritt. Details in der Messung vom 23.08. |
 | 22.08.2026 | ~~`01` auf `0x2005` bewirkt gar nichts~~ **Teil-Widerlegung, am 23.08. präzisiert.** | Damals gedeutet als „bewirkt nichts, Wert bleibt `03`". Richtig ist: `03` ist der Bitfeld-Lesewert („WLAN+BT aktiv"), keine Statusmeldung über Wirkungslosigkeit. Der Schreibzugriff wird angenommen. Dass damals nichts geschah, lag auch an fehlender Kopplung (`0x2004` lieferte leere Daten). Aber: Auch **mit** Kopplung startet `0x01` den AP nicht allein (23.08.). |
