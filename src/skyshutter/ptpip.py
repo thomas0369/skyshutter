@@ -363,7 +363,11 @@ class PtpIpConnection:
         """
         if self._event is None:
             return
-        send_packet(self._event, Packet(PacketType.PING))
+        try:
+            send_packet(self._event, Packet(PacketType.PING))
+        except OSError as exc:
+            log.warning("failed to send ping on event channel: %s", exc)
+            self.close()
 
     def close_session(self) -> None:
         self.transaction(OperationCode.CLOSE_SESSION, raise_on_error=False)
