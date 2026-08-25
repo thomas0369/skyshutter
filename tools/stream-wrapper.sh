@@ -38,9 +38,9 @@ while true; do
         if [ "$CONNECTED" = true ]; then
             # Prüfe, ob wir die Kamera pingen können
             if ping -c 2 "$CAMERA_IP" > /dev/null 2>&1; then
-                echo "3. Starte skyshutter stream auf Port 8080..."
+                echo "3. Starte skyshutter stream auf Port 8080 (remote mode)..."
                 # Starte den Stream. Wenn er abstürzt, bricht die Schleife ab und wir fangen von vorne an.
-                $PYTHON -m skyshutter.cli --host "$CAMERA_IP" stream --bind 0.0.0.0 --http-port 8080
+                $PYTHON -m skyshutter.cli --host "$CAMERA_IP" stream --bind 0.0.0.0 --http-port 8080 --remote --fps 25
                 echo "Stream-Server beendet."
             else
                 echo "Kamera-IP $CAMERA_IP ist nicht pingbar. Starte neu..."
