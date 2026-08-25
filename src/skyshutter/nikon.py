@@ -561,8 +561,8 @@ class NikonCamera:
         return LiveViewFrame(jpeg, 0, 0, 0, 0, (0, 0, 0, 0), (0, 0, 0, 0), 0, 0, 0, 0)
 
     @contextmanager
-    def live_view(self) -> Iterator[NikonCamera]:
-        self.start_live_view()
+    def live_view(self, attempts: int = 10, pause: float = 0.5) -> Iterator[NikonCamera]:
+        self.start_live_view(attempts=attempts, pause=pause)
         try:
             yield self
         finally:
@@ -584,6 +584,9 @@ class NikonCamera:
         )
         # 0xA003 = mode change rejected -- camera is already in that mode.
         if result.ok or result.response_code == 0xA003:
+            # Mode transition is asynchronous: the camera answers OK but
+            # StartLiveView keeps answering DEVICE_BUSY for a few seconds.
+            self.wait_until_ready(timeout=10)
             time.sleep(settle)
             return True
         raise PtpError(result.response_code, NikonOperation.SET_CONTROL_MODE)
@@ -597,7 +600,7 @@ class NikonCamera:
         interval = 1.0 / fps if fps > 0 else 0.0
         if remote_mode:
             self.enter_remote_mode()
-        with self.live_view():
+        with self.live_view(attempts=20, pause=1.0):
             while True:
                 started = time.monotonic()
                 frame = self.get_live_view_frame()
