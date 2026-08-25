@@ -112,6 +112,38 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 25.08.2026 (21:37–21:45) — Frame-Rate-Ursache gemessen: Kamera-AP ist 802.11g @ 48 Mbps, Kamera sendet 6,6 Mbps
+Aufbau:     Passiv auf dem laufenden Stream (kein zweiter Client, kein
+            Dienst-Stop): Frame-Inter-Arrival per MJPEG-Socket, 12 s tcpdump
+            auf wlan0/15740 (`/tmp/cap.pcap`, 10 MB), Burst-Analyse,
+            `iw station dump`, Power-Save-A/B. Beweisframe:
+            `docs/proof/stream_frame_2137.jpg`.
+Belegt:     - **Frame-Abstände steady-state ~540 ms** (HTTP-Messung:
+              [508, 547, 538, 544, 555, 518, 533, 567] ms) ⇒ ~1,85 fps.
+            - **Frameformat: 1552×1168 Baseline-JPEG, ~540 KB** — fix, der
+              `0x9202`-Opcode nimmt keine Parameter (Größe nicht verhandelbar).
+            - **Kamera-Antwortlatenz ~40 ms** (tcpdump: Request→erste
+              Datenpakete 11–58 ms) — die Kamera ist nicht träge.
+            - **Funk: exzellent, aber alt.** Signal −49 dBm / 89 %, Ping-RTT
+              ~2 ms — doch `iw station dump`: **tx/rx bitrate 48,0 MBit/s**,
+              d.h. Legacy-802.11g-Modulation, keine n-Raten. Der P1100-AP ist
+              eine g-Funkstrecke auf Kanal 6.
+            - **Effektiver Durchsatz nur ~6,6 Mbps** (Burst-Rate der
+              Kamera-Pakete). Rechnung: 540 KB = 4,3 Mbit ÷ 6,6 Mbps ≈ 1,5–1,9
+              fps — deckungsgleich mit der Messung. Selbst bei Sättigung der
+              g-Strecke wären es max ~4–5 fps.
+            - **Power-Save off: wirkungslos** (A/B: Abstände danach 536–833 ms,
+              median schlechter). Kamera taket ihre Aussendung selbst.
+            - Kamera erlaubt genau **einen** PTP-Client: zweiter Connect ⇒
+              `InitFail 0x00000002` (gemessen). Messungen am laufenden Stream
+              nur passiv.
+Folge:      Die 1,8 fps sind ein **Hardware-Deckel der Kamera** (g-AP +
+              Aussende-Takt), nicht unseres Codes. Für Astro-Framing/
+              Fokussieren reicht das; flüssiges Video gibt es nur über einen
+              anderen Pfad (App-Streaming-Protokoll, kleinere Frames —
+              offen, siehe referenz.md). Kein Hebel an link-localen
+              Stellschrauben (Power-Save, Fenster, MTU) messbar.
+
 ### 25.08.2026 (20:57–21:08) — Dauer-Stream live: systemd-Dienst, Zombie-BLE-Falle, 1,75 fps gemessen
 Aufbau:     `skyshutter-stream.service` (systemd, `Restart=always`) ruft
             `tools/stream-wrapper.sh`: Endlos-Loop aus BLE-Wake
