@@ -107,7 +107,7 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument(
         "--preview",
         action="store_true",
-        help="fetch the 8 MP preview (0x9522) instead of the full file",
+        help="fetch the preview JPEG (0x9522, measured 1440x1080) instead of the full file",
     )
 
     set_parser = _subparser(sub, "set", "change an exposure setting on the camera")
@@ -407,7 +407,7 @@ def _fetch_objects(camera: NikonCamera, infos: list, out: Path, preview: bool = 
     for info in infos:
         if preview:
             data = camera.preview(info.handle)
-            path = out / f"{info.filename.rsplit('.', 1)[0]}_8mp.jpg"
+            path = out / f"{info.filename.rsplit('.', 1)[0]}_preview.jpg"
         else:
             data = camera.download(info.handle, info.compressed_size)
             path = out / info.filename
@@ -469,6 +469,7 @@ def cmd_set(args: argparse.Namespace) -> int:
         "P": ExposureProgram.PROGRAM_AUTO,
         "A": ExposureProgram.APERTURE_PRIORITY,
         "S": ExposureProgram.SHUTTER_PRIORITY,
+        "AUTO": ExposureProgram.NIKON_AUTO,
     }
     drive_names = {"single": DriveMode.SINGLE, "burst": DriveMode.BURST}
 

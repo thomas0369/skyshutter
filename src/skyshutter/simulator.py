@@ -103,7 +103,11 @@ def _placeholder_jpeg() -> bytes:
 
 
 def _preview_jpeg() -> bytes:
-    """The 8 MP stand-in: same markers, visibly smaller, distinct body."""
+    """Preview stand-in: stands for the measured 1440x1080 JPEG (0x9522).
+
+    Kept at 320x240 so the invariant "preview smaller than the stored
+    frame" holds in the Pillow-less text mode too.
+    """
     return _sized_jpeg((320, 240), b"simulated preview")
 
 
@@ -246,7 +250,9 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
             NikonProperty.LIVE_VIEW_STATUS: struct.pack("<I", 0),
             NikonProperty.LIVE_VIEW_PROHIBIT: struct.pack("<I", 0),
             # 1/60 s as the vendor form: numerator, denominator.
-            NikonProperty.SHUTTER_SPEED: struct.pack("<II", 1, 60),
+            NikonProperty.SHUTTER_SPEED: struct.pack(
+                "<I", (1 << 16) | 60
+            ),  # packed pair: 1/60 s, the measured desc default
             NikonProperty.REMAINING_CAPTURE: struct.pack("<I", 999),
             NikonProperty.LENS_FOCAL_MIN: struct.pack("<I", 24),
             NikonProperty.LENS_FOCAL_MAX: struct.pack("<I", 3000),
@@ -310,10 +316,17 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         if opcode == NikonOperation.ZOOM_CONTROL:
             return ResponseCode.OK, b""
         if opcode == NikonOperation.GET_SPECIFIC_SIZE_PARTIAL_OBJECT:
+            # Size-code matrix measured 26.08. at HW: 1 and 3 deliver the
+            # same preview, 2 has no thumbnail, the rest are invalid.
             handle = params[0] if params else 0
-            if handle in self.objects:
+            size_code = params[1] if len(params) > 1 else 0
+            if handle not in self.objects:
+                return ResponseCode.INVALID_OBJECT_HANDLE, b""
+            if size_code in (1, 3):
                 return ResponseCode.OK, _preview_jpeg()
-            return ResponseCode.INVALID_OBJECT_HANDLE, b""
+            if size_code == 2:
+                return ResponseCode.NO_THUMBNAIL_PRESENT, b""
+            return ResponseCode.INVALID_PARAMETER, b""
         if opcode in (
             OperationCode.INITIATE_CAPTURE,
             NikonOperation.CAPTURE,

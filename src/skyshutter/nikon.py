@@ -129,12 +129,22 @@ class StandardProperty(IntEnum):
 
 
 class ExposureProgram(IntEnum):
-    """ExposureProgramMode (ISO 15740 §13.4.3) -- M must be set for long exposures."""
+    """PTP exposure programs (ISO 15740) plus Nikon vendor modes.
+
+    The vendor values are the camera's own measured enum (26.08., bundle
+    props.json): 0x8010 is the factory default -- "Auto" by behaviour, the
+    name is inferred, not documented. The others stay numeric.
+    """
 
     MANUAL = 1
     PROGRAM_AUTO = 2
     APERTURE_PRIORITY = 3
     SHUTTER_PRIORITY = 4
+    NIKON_AUTO = 0x8010
+    NIKON_8016 = 0x8016
+    NIKON_8018 = 0x8018
+    NIKON_80D0 = 0x80D0
+    NIKON_80D1 = 0x80D1
 
 
 class DriveMode(IntEnum):
@@ -458,15 +468,23 @@ class NikonCamera:
     # The writes themselves still need the owner's OK for hardware runs.
 
     def shutter_speed(self) -> tuple[int, int]:
-        """Shutter speed as (numerator, denominator); 0xFFFF/0xFFFF is Bulb."""
+        """Shutter speed as (numerator, denominator); (0xFFFF, 0xFFFF) is Bulb.
+
+        Measured 26.08. at HW: the value dataset carries the pair packed
+        into a uint32 -- numerator in the high half, denominator in the low
+        half (0x000A03E8 -> 10/1000 = 1/100 s; the PropertyDesc default
+        0x0001003C -> 1/60 s). The desc declares INT64; the value fits 4.
+        """
         raw = self.get_property(NikonProperty.SHUTTER_SPEED)
-        if len(raw) < 8:
-            return (int.from_bytes(raw[:4], "little"), 1) if len(raw) >= 4 else (0, 0)
-        return struct.unpack("<II", raw[:8])
+        if len(raw) < 4:
+            return (0, 0)
+        value = int.from_bytes(raw[:4], "little")
+        return (value >> 16, value & 0xFFFF)
 
     def set_shutter_speed(self, numerator: int, denominator: int) -> None:
         """Set the shutter as a fraction, e.g. (1, 30) for 1/30 s."""
-        self.set_property(NikonProperty.SHUTTER_SPEED, struct.pack("<II", numerator, denominator))
+        value = ((numerator & 0xFFFF) << 16) | (denominator & 0xFFFF)
+        self.set_property(NikonProperty.SHUTTER_SPEED, struct.pack("<I", value))
 
     def iso(self) -> int:
         """ISO; 0 means Auto (measured: current 0 while the enum starts at 100)."""
@@ -673,13 +691,14 @@ class NikonCamera:
             received += result.data
         return bytes(received)
 
-    def preview(self, handle: int, size_code: int = 4) -> bytes:
+    def preview(self, handle: int, size_code: int = 1) -> bytes:
         """Fetch an object as a downscaled preview (vendor op 0x9522).
 
-        Takes ``(handle, size_code, 0)``; size code 4 means 8 MP on this
-        camera (referenz.md). The vendor app prefers this over full
-        downloads while browsing: a quarter of the pixels for a quarter
-        of the airtime on the camera's own slow access point.
+        Takes ``(handle, size_code, 0)``. Measured 26.08. at HW: only codes
+        1 and 3 are accepted and both deliver the same 1440x1080 JPEG
+        (~343 kB for a 3.6 MB original); code 2 answers NO_THUMBNAIL_PRESENT,
+        0 and 4-7 INVALID_PARAMETER. The "8 MP" claim from the app analysis
+        does not hold on this camera.
         """
         self._require(NikonOperation.GET_SPECIFIC_SIZE_PARTIAL_OBJECT, "preview")
         result = self.connection.transaction(

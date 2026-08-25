@@ -100,7 +100,7 @@ def test_set_writes_exposure_settings(
     assert main(_args(camera_address, "set", "ev", "-0.7")) == 0
     assert main(_args(camera_address, "set", "program", "M")) == 0
     assert main(_args(camera_address, "set", "drive", "burst")) == 0
-    assert camera_server.properties[NikonProperty.SHUTTER_SPEED] == _s.pack("<II", 1, 30)
+    assert camera_server.properties[NikonProperty.SHUTTER_SPEED] == _s.pack("<I", (1 << 16) | 30)
     assert camera_server.properties[StandardProperty.ISO] == _s.pack("<H", 800)
     assert camera_server.properties[StandardProperty.F_NUMBER] == _s.pack("<H", 560)
     assert camera_server.properties[StandardProperty.EXPOSURE_BIAS] == _s.pack("<h", -700)
@@ -170,7 +170,7 @@ def test_download_preview_fetches_smaller_object(
         main(_args(camera_address, "download", "--last", "1", "--preview", "-o", str(tmp_path)))
         == 0
     )
-    previews = list(tmp_path.glob("*_8mp.jpg"))
+    previews = list(tmp_path.glob("*_preview.jpg"))
     assert len(previews) == 1
     data = previews[0].read_bytes()
     assert data[:2] == b"\xff\xd8" and data[-2:] == b"\xff\xd9"
