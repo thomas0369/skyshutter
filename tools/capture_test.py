@@ -9,9 +9,9 @@ import sys
 import time
 
 sys.path.insert(0, "/home/thomas/projekte_hardware/skyshutter/src")
-from skyshutter.nikon import NikonCamera, NikonOperation
-from skyshutter.ptp import PtpError
 from skyshutter import config
+from skyshutter.nikon import NikonCamera
+from skyshutter.ptp import PtpError
 
 SET_CONTROL_MODE = 0x90C2
 INITIATE_CAPTURE = 0x9207
