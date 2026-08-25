@@ -179,6 +179,24 @@ def test_download_preview_fetches_smaller_object(
     assert len(data) < len(full)
 
 
+def test_bundle_collects_everything_in_one_directory(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    out = tmp_path / "b"
+    assert main(_args(camera_address, "bundle", "-o", str(out))) == 0
+    assert "bundle ->" in capsys.readouterr().out
+    info = json.loads((out / "device-info.json").read_text())
+    assert "COOLPIX" in info["model"]
+    props = json.loads((out / "props.json").read_text())
+    assert props["properties"]
+    json.loads((out / "events.json").read_text())
+    frame = (out / "frame.jpg").read_bytes()
+    assert frame[:2] == b"\xff\xd8"
+
+
 def test_liveview_writes_frames_to_disk(
     camera_address: tuple[str, int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

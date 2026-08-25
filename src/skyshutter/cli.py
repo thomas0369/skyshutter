@@ -117,6 +117,20 @@ def build_parser() -> argparse.ArgumentParser:
     set_parser.add_argument("value", nargs="+", help="value(s) for the setting")
     set_parser.add_argument("--show", action="store_true", help="only print the current value")
 
+    bundle = _subparser(
+        sub,
+        "bundle",
+        "collect device info, props, events and one frame into one directory",
+    )
+    bundle.add_argument(
+        "-o",
+        "--out",
+        type=Path,
+        default=None,
+        help="output directory (default: bundle-<timestamp>)",
+    )
+    bundle.epilog = "Needs the camera's single PTP/IP client slot -- stop the stream service first."
+
     liveview = _subparser(sub, "liveview", "save live view frames to disk")
     liveview.add_argument("-o", "--out", type=Path, default=Path("liveview"))
     liveview.add_argument("-n", "--frames", type=int, default=10)
@@ -516,6 +530,36 @@ def cmd_set(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_bundle(args: argparse.Namespace) -> int:
+    import dataclasses
+
+    out = args.out if args.out else Path(time.strftime("bundle-%Y%m%d-%H%M%S"))
+    out.mkdir(parents=True, exist_ok=True)
+    with NikonCamera.open(
+        _resolve_host(args),
+        port=args.port,
+        guid=config.client_guid(args.guid),
+        friendly_name=config.client_name(args.name),
+        timeout=args.timeout,
+    ) as camera:
+        assert camera.device_info is not None
+        (out / "device-info.json").write_text(
+            json.dumps(dataclasses.asdict(camera.device_info), indent=2)
+        )
+        (out / "props.json").write_text(json.dumps(_prop_snapshot(camera), indent=2))
+        events = [{"code": f"0x{c:04X}", "param": p} for c, p in camera.get_events()]
+        (out / "events.json").write_text(json.dumps(events, indent=2))
+        # One live frame, best effort: a failed frame must not cost the rest.
+        try:
+            for frame in camera.stream_live_view(fps=0):
+                (out / "frame.jpg").write_bytes(frame)
+                break
+        except Exception as exc:
+            (out / "frame-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+        print(f"bundle -> {out}")
+    return 0
+
+
 def cmd_liveview(args: argparse.Namespace) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     saved = 0
@@ -681,6 +725,7 @@ COMMANDS = {
     "shoot": cmd_shoot,
     "download": cmd_download,
     "set": cmd_set,
+    "bundle": cmd_bundle,
     "liveview": cmd_liveview,
     "stream": cmd_stream,
     "raw": cmd_raw,
