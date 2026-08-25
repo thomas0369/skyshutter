@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import struct
+
 import pytest
 
 from skyshutter.nikon import (
@@ -123,8 +125,8 @@ def test_a_retracted_lens_stops_live_view_before_it_starts(
     camera_address: tuple[str, int], camera_server: SimulatorServer
 ) -> None:
     """What the hardware did over USB, reproduced without hardware."""
-    camera_server.properties[NikonProperty.LIVE_VIEW_PROHIBIT] = int(
-        LiveViewProhibit.LENS_RETRACTED
+    camera_server.properties[NikonProperty.LIVE_VIEW_PROHIBIT] = struct.pack(
+        "<I", int(LiveViewProhibit.LENS_RETRACTED)
     )
     host, port = camera_address
     with NikonCamera.open(host, port=port, timeout=5) as camera:

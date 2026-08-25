@@ -116,6 +116,39 @@ class NikonProperty(IntEnum):
     REMAINING_CAPTURE = 0xD1F1
 
 
+class StandardProperty(IntEnum):
+    """ISO 15740 device properties this camera reports (23.08.2026)."""
+
+    F_NUMBER = 0x5007
+    FOCAL_LENGTH = 0x5008
+    FOCUS_MODE = 0x500A
+    EXPOSURE_PROGRAM = 0x500E
+    ISO = 0x500F
+    EXPOSURE_BIAS = 0x5010
+    STILL_CAPTURE_MODE = 0x5013
+
+
+class ExposureProgram(IntEnum):
+    """ExposureProgramMode (ISO 15740 §13.4.3) -- M must be set for long exposures."""
+
+    MANUAL = 1
+    PROGRAM_AUTO = 2
+    APERTURE_PRIORITY = 3
+    SHUTTER_PRIORITY = 4
+
+
+class DriveMode(IntEnum):
+    """StillCaptureMode (ISO 15740). 1 and 2 measured; vendor self-timer
+    values, if any, travel as raw numbers through the CLI."""
+
+    SINGLE = 1
+    BURST = 2
+
+
+#: 0xFFFF/0xFFFF -- what 0xD100 carries when the dial is on Bulb.
+BULB_SHUTTER = (0xFFFF, 0xFFFF)
+
+
 class LiveViewProhibit(IntFlag):
     """Why the camera will not start live view -- property 0xD1A4.
 
@@ -406,6 +439,64 @@ class NikonCamera:
     def set_property_u32(self, code: int, value: int) -> None:
         """Set uint32 value of a device property."""
         self.set_property(code, struct.pack("<I", value))
+
+    # -- typed exposure controls ------------------------------------------
+    # Formats per ISO 15740; the shutter pair is the vendor form measured
+    # from the app (referenz.md). None of these writes has run on hardware
+    # yet -- simulator only. Hardware validation needs the owner's OK.
+
+    def shutter_speed(self) -> tuple[int, int]:
+        """Shutter speed as (numerator, denominator); 0xFFFF/0xFFFF is Bulb."""
+        raw = self.get_property(NikonProperty.SHUTTER_SPEED)
+        if len(raw) < 8:
+            return (int.from_bytes(raw[:4], "little"), 1) if len(raw) >= 4 else (0, 0)
+        return struct.unpack("<II", raw[:8])
+
+    def set_shutter_speed(self, numerator: int, denominator: int) -> None:
+        """Set the shutter as a fraction, e.g. (1, 30) for 1/30 s."""
+        self.set_property(NikonProperty.SHUTTER_SPEED, struct.pack("<II", numerator, denominator))
+
+    def iso(self) -> int:
+        return self.get_property_u32(StandardProperty.ISO)
+
+    def set_iso(self, value: int) -> None:
+        self.set_property_u32(StandardProperty.ISO, value)
+
+    def aperture(self) -> float:
+        """F-number; PTP carries it times 100 (ISO 15740)."""
+        return self.get_property_u32(StandardProperty.F_NUMBER) / 100.0
+
+    def set_aperture(self, f_number: float) -> None:
+        self.set_property_u32(StandardProperty.F_NUMBER, round(f_number * 100))
+
+    def exposure_bias(self) -> float:
+        """Exposure compensation in stops; the wire unit is millistops."""
+        raw = self.get_property(StandardProperty.EXPOSURE_BIAS)
+        return struct.unpack("<i", raw[:4])[0] / 1000.0 if len(raw) >= 4 else 0.0
+
+    def set_exposure_bias(self, stops: float) -> None:
+        self.set_property(StandardProperty.EXPOSURE_BIAS, struct.pack("<i", round(stops * 1000)))
+
+    def exposure_program(self) -> ExposureProgram:
+        return ExposureProgram(self.get_property_u32(StandardProperty.EXPOSURE_PROGRAM))
+
+    def set_exposure_program(self, mode: ExposureProgram) -> None:
+        self.set_property_u32(StandardProperty.EXPOSURE_PROGRAM, int(mode))
+
+    def drive_mode(self) -> DriveMode:
+        return DriveMode(self.get_property_u32(StandardProperty.STILL_CAPTURE_MODE))
+
+    def set_drive_mode(self, mode: DriveMode) -> None:
+        self.set_property_u32(StandardProperty.STILL_CAPTURE_MODE, int(mode))
+
+    def focal_length(self) -> int:
+        """Current focal length in mm (read-only; zoom runs through 0x9016)."""
+        return self.get_property_u32(StandardProperty.FOCAL_LENGTH)
+
+    def set_af_area(self, x: int, y: int) -> None:
+        """Move the autofocus field (0x9205); coordinates in live view pixels."""
+        self._require(NikonOperation.CHANGE_AF_AREA, "AF area")
+        self.connection.transaction(NikonOperation.CHANGE_AF_AREA, (x, y))
 
     @staticmethod
     def _parse_code_list(data: bytes) -> list[int]:

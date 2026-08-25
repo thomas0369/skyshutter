@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 
-from skyshutter.nikon import NikonCamera, NikonProperty
+from skyshutter.nikon import NikonCamera, NikonProperty, StandardProperty
 from skyshutter.ptp import (
     AccessCapability,
     DataType,
@@ -73,8 +73,8 @@ def test_properties_maps_every_describable_code(camera_address: tuple[str, int])
     host, port = camera_address
     with NikonCamera.open(host, port=port, timeout=5) as camera:
         props = camera.properties()
-    # The simulator describes exactly the six vendor properties it holds; the
-    # standard codes it advertises but does not describe are skipped.
+    # The simulator describes exactly the properties it holds: the vendor
+    # ones plus the standard exposure controls.
     assert set(props) == {
         NikonProperty.LIVE_VIEW_STATUS,
         NikonProperty.LIVE_VIEW_PROHIBIT,
@@ -82,6 +82,13 @@ def test_properties_maps_every_describable_code(camera_address: tuple[str, int])
         NikonProperty.REMAINING_CAPTURE,
         NikonProperty.LENS_FOCAL_MIN,
         NikonProperty.LENS_FOCAL_MAX,
+        StandardProperty.F_NUMBER,
+        StandardProperty.FOCAL_LENGTH,
+        StandardProperty.FOCUS_MODE,
+        StandardProperty.EXPOSURE_PROGRAM,
+        StandardProperty.ISO,
+        StandardProperty.EXPOSURE_BIAS,
+        StandardProperty.STILL_CAPTURE_MODE,
     }
     assert all(isinstance(v, PropertyDesc) for v in props.values())
 
@@ -99,7 +106,12 @@ def test_storage_ids_and_info_agree(camera_address: tuple[str, int]) -> None:
 def test_write_property_value(camera_address: tuple[str, int]) -> None:
     host, port = camera_address
     with NikonCamera.open(host, port=port, timeout=5) as camera:
-        # Shutter speed starts at 0 in the simulator
-        assert camera.get_property_u32(NikonProperty.SHUTTER_SPEED) == 0
-        camera.set_property_u32(NikonProperty.SHUTTER_SPEED, 42)
-        assert camera.get_property_u32(NikonProperty.SHUTTER_SPEED) == 42
+        # The shutter travels as the vendor pair (numerator, denominator);
+        # the typed setter writes all eight bytes and the reader returns them.
+        assert camera.shutter_speed() == (1, 60)
+        camera.set_shutter_speed(1, 30)
+        assert camera.shutter_speed() == (1, 30)
+        # Plain uint32 properties round-trip through the raw helpers.
+        assert camera.iso() == 100
+        camera.set_property_u32(StandardProperty.ISO, 800)
+        assert camera.get_property_u32(StandardProperty.ISO) == 800

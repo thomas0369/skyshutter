@@ -85,6 +85,32 @@ def test_download_list_shows_objects_without_fetching(
     assert "DSC_" in capsys.readouterr().out
 
 
+def test_set_writes_exposure_settings(
+    camera_address: tuple[str, int],
+    camera_server: SimulatorServer,
+) -> None:
+    import struct as _s
+
+    from skyshutter.nikon import DriveMode, ExposureProgram, NikonProperty, StandardProperty
+
+    assert main(_args(camera_address, "set", "shutter", "1/30")) == 0
+    assert main(_args(camera_address, "set", "iso", "800")) == 0
+    assert main(_args(camera_address, "set", "aperture", "5.6")) == 0
+    assert main(_args(camera_address, "set", "ev", "-0.7")) == 0
+    assert main(_args(camera_address, "set", "program", "M")) == 0
+    assert main(_args(camera_address, "set", "drive", "burst")) == 0
+    assert camera_server.properties[NikonProperty.SHUTTER_SPEED] == _s.pack("<II", 1, 30)
+    assert camera_server.properties[StandardProperty.ISO] == _s.pack("<I", 800)
+    assert camera_server.properties[StandardProperty.F_NUMBER] == _s.pack("<I", 560)
+    assert camera_server.properties[StandardProperty.EXPOSURE_BIAS] == _s.pack("<i", -700)
+    assert camera_server.properties[StandardProperty.EXPOSURE_PROGRAM] == _s.pack(
+        "<I", int(ExposureProgram.MANUAL)
+    )
+    assert camera_server.properties[StandardProperty.STILL_CAPTURE_MODE] == _s.pack(
+        "<I", int(DriveMode.BURST)
+    )
+
+
 def test_liveview_writes_frames_to_disk(
     camera_address: tuple[str, int], tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

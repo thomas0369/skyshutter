@@ -87,6 +87,14 @@ def build_parser() -> argparse.ArgumentParser:
     download.add_argument("-o", "--out", type=Path, default=Path("."), help="output directory")
     download.add_argument("--list", action="store_true", help="only list objects, fetch nothing")
 
+    set_parser = _subparser(sub, "set", "change an exposure setting on the camera")
+    set_parser.add_argument(
+        "what",
+        choices=["shutter", "iso", "aperture", "ev", "program", "drive", "afarea"],
+    )
+    set_parser.add_argument("value", nargs="+", help="value(s) for the setting")
+    set_parser.add_argument("--show", action="store_true", help="only print the current value")
+
     liveview = _subparser(sub, "liveview", "save live view frames to disk")
     liveview.add_argument("-o", "--out", type=Path, default=Path("liveview"))
     liveview.add_argument("-n", "--frames", type=int, default=10)
@@ -340,6 +348,76 @@ def cmd_download(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set(args: argparse.Namespace) -> int:
+    from .nikon import BULB_SHUTTER, DriveMode, ExposureProgram
+
+    program_names = {
+        "M": ExposureProgram.MANUAL,
+        "P": ExposureProgram.PROGRAM_AUTO,
+        "A": ExposureProgram.APERTURE_PRIORITY,
+        "S": ExposureProgram.SHUTTER_PRIORITY,
+    }
+    drive_names = {"single": DriveMode.SINGLE, "burst": DriveMode.BURST}
+
+    with NikonCamera.open(
+        _resolve_host(args),
+        port=args.port,
+        guid=config.client_guid(args.guid),
+        friendly_name=config.client_name(args.name),
+        timeout=args.timeout,
+    ) as camera:
+        what, value = args.what, args.value
+        if what == "shutter":
+            if args.show:
+                num, den = camera.shutter_speed()
+                print("bulb" if (num, den) == BULB_SHUTTER else f"{num}/{den} s")
+                return 0
+            text = value[0].lower()
+            if text == "bulb":
+                camera.set_shutter_speed(*BULB_SHUTTER)
+            elif "/" in text:
+                num, den = text.split("/", 1)
+                camera.set_shutter_speed(int(num), int(den))
+            else:
+                camera.set_shutter_speed(1, int(text.removeprefix("s")))
+        elif what == "iso":
+            if args.show:
+                print(camera.iso())
+                return 0
+            camera.set_iso(int(value[0]))
+        elif what == "aperture":
+            if args.show:
+                print(f"f/{camera.aperture():.1f}")
+                return 0
+            camera.set_aperture(float(value[0]))
+        elif what == "ev":
+            if args.show:
+                print(f"{camera.exposure_bias():+.1f} EV")
+                return 0
+            camera.set_exposure_bias(float(value[0]))
+        elif what == "program":
+            if args.show:
+                print(camera.exposure_program().name)
+                return 0
+            camera.set_exposure_program(program_names[value[0].upper()])
+        elif what == "drive":
+            if args.show:
+                print(camera.drive_mode().name)
+                return 0
+            name = value[0].lower()
+            if name in drive_names:
+                camera.set_drive_mode(drive_names[name])
+            else:
+                camera.set_drive_mode(DriveMode(int(name)))
+        elif what == "afarea":
+            if len(value) != 2:
+                print("afarea needs x and y", file=sys.stderr)
+                return 2
+            camera.set_af_area(int(value[0]), int(value[1]))
+        print(f"{what} set")
+    return 0
+
+
 def cmd_liveview(args: argparse.Namespace) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     saved = 0
@@ -504,6 +582,7 @@ COMMANDS = {
     "events": cmd_events,
     "shoot": cmd_shoot,
     "download": cmd_download,
+    "set": cmd_set,
     "liveview": cmd_liveview,
     "stream": cmd_stream,
     "raw": cmd_raw,

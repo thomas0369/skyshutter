@@ -21,7 +21,7 @@ import socketserver
 import struct
 import uuid
 
-from .nikon import NikonOperation, NikonProperty
+from .nikon import DriveMode, ExposureProgram, NikonOperation, NikonProperty, StandardProperty
 from .ptp import (
     AccessCapability,
     DataType,
@@ -123,8 +123,13 @@ def simulated_device_info() -> DeviceInfo:
         device_properties_supported=[
             0x5001,
             0x5005,
-            0x500F,
-            0x5010,
+            int(StandardProperty.F_NUMBER),
+            int(StandardProperty.FOCAL_LENGTH),
+            int(StandardProperty.FOCUS_MODE),
+            int(StandardProperty.EXPOSURE_PROGRAM),
+            int(StandardProperty.ISO),
+            int(StandardProperty.EXPOSURE_BIAS),
+            int(StandardProperty.STILL_CAPTURE_MODE),
             int(NikonProperty.SHUTTER_SPEED),
             int(NikonProperty.LIVE_VIEW_STATUS),
             int(NikonProperty.LIVE_VIEW_PROHIBIT),
@@ -223,15 +228,25 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         self.objects: dict[int, bytes] = {}
         self.filenames: dict[int, str] = {}
         self._next_handle = 0x10000001
-        #: Vendor properties the real camera reports. The prohibit condition
-        #: starts clear -- a simulator with the lens retracted would be useless.
-        self.properties: dict[int, int] = {
-            NikonProperty.LIVE_VIEW_STATUS: 0,
-            NikonProperty.LIVE_VIEW_PROHIBIT: 0,
-            NikonProperty.SHUTTER_SPEED: 0,
-            NikonProperty.REMAINING_CAPTURE: 999,
-            NikonProperty.LENS_FOCAL_MIN: 24,
-            NikonProperty.LENS_FOCAL_MAX: 3000,
+        #: Device property values as raw bytes, in the wire format each
+        #: property uses -- the shutter pair travels as eight bytes, the
+        #: rest as uint32. Stored bytes-first so the client sees exactly
+        #: what it sent.
+        self.properties: dict[int, bytes] = {
+            NikonProperty.LIVE_VIEW_STATUS: struct.pack("<I", 0),
+            NikonProperty.LIVE_VIEW_PROHIBIT: struct.pack("<I", 0),
+            # 1/60 s as the vendor form: numerator, denominator.
+            NikonProperty.SHUTTER_SPEED: struct.pack("<II", 1, 60),
+            NikonProperty.REMAINING_CAPTURE: struct.pack("<I", 999),
+            NikonProperty.LENS_FOCAL_MIN: struct.pack("<I", 24),
+            NikonProperty.LENS_FOCAL_MAX: struct.pack("<I", 3000),
+            StandardProperty.F_NUMBER: struct.pack("<I", 280),  # f/2.8
+            StandardProperty.FOCAL_LENGTH: struct.pack("<I", 24),
+            StandardProperty.FOCUS_MODE: struct.pack("<I", 0x8010),  # AF-S
+            StandardProperty.EXPOSURE_PROGRAM: struct.pack("<I", int(ExposureProgram.PROGRAM_AUTO)),
+            StandardProperty.ISO: struct.pack("<I", 100),
+            StandardProperty.EXPOSURE_BIAS: struct.pack("<i", 0),
+            StandardProperty.STILL_CAPTURE_MODE: struct.pack("<I", int(DriveMode.SINGLE)),
         }
 
     def operation(
@@ -242,14 +257,13 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         if opcode == OperationCode.GET_DEVICE_PROP_VALUE:
             code = params[0] if params else 0
             if code in self.properties:
-                return ResponseCode.OK, struct.pack("<I", self.properties[code])
+                return ResponseCode.OK, self.properties[code]
             return ResponseCode.OPERATION_NOT_SUPPORTED, b""
         if opcode == OperationCode.SET_DEVICE_PROP_VALUE:
             code = params[0] if params else 0
-            if code in self.properties:
-                if len(incoming_data) >= 4:
-                    self.properties[code] = struct.unpack("<I", incoming_data[:4])[0]
-                    return ResponseCode.OK, b""
+            if code in self.properties and incoming_data:
+                self.properties[code] = incoming_data
+                return ResponseCode.OK, b""
             return ResponseCode.OPERATION_NOT_SUPPORTED, b""
         if opcode == OperationCode.GET_PARTIAL_OBJECT:
             # (handle, offset, length) -- hand back that slice of the object.
@@ -308,13 +322,16 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
         if opcode == OperationCode.GET_DEVICE_PROP_DESC:
             code = params[0] if params else 0
             if code in self.properties:
+                # The descriptor speaks scalar values; the shutter pair and
+                # other long forms report their first four bytes.
+                value = int.from_bytes(self.properties[code][:4], "little")
                 desc = PropertyDesc(
                     code=code,
                     data_type=DataType.UINT32,
                     access=AccessCapability.GET_SET,
                     form_flag=FormFlag.NONE,
-                    default_value=self.properties[code],
-                    current_value=self.properties[code],
+                    default_value=value,
+                    current_value=value,
                 )
                 return ResponseCode.OK, desc.pack()
             return ResponseCode.OPERATION_NOT_SUPPORTED, b""
