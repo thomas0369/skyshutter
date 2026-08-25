@@ -36,7 +36,7 @@ def frames(cam, seconds, label):
             errors += 1
         time.sleep(0.01)
     n = len(stamps)
-    gaps = [round((b - a) * 1000) for a, b in zip(stamps, stamps[1:])]
+    gaps = [round((b - a) * 1000) for a, b in zip(stamps, stamps[1:], strict=False)]
     if gaps:
         med = sorted(gaps)[len(gaps) // 2]
         print(
