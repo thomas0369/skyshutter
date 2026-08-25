@@ -23,7 +23,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Belichtungs-Steuerung implementiert (simuliert), HW-Write-Validierung wartet auf OK** — `set`-CLI (shutter/iso/aperture/ev/program/drive/afarea), `shoot --get`, `download --preview` (8 MP via 0x9522), `props --dump/--diff` (26.08.) |
+| **Phase** | **Belichtungs-Steuerung implementiert (simuliert), HW-Write-Validierung wartet auf OK** — `set`-CLI (shutter/iso/aperture/ev/program/drive/afarea), `shoot --get`, `download --preview` (8 MP via 0x9522), `props --dump/--diff`, `bundle` (26.08.) |
 | **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **typisierte Belichtungs-API + set-CLI** (171 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
