@@ -28,8 +28,9 @@ RSPID=$!
 sleep 12
 
 JOINED=0
+SSID="$(sed -n '1p' /tmp/skyshutter_creds.txt)"
 for i in $(seq 1 12); do
-    if nmcli dev wifi connect P1100_20010205 password "$(sed -n '2p' /tmp/skyshutter_creds.txt)" 2>/dev/null; then
+    if nmcli dev wifi connect "$SSID" password "$(sed -n '2p' /tmp/skyshutter_creds.txt)" 2>/dev/null; then
         JOINED=1; break
     fi
     sleep 3
