@@ -490,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         return COMMANDS[args.command](args)
-    except (PtpError, PtpIpError, btsnoop.BtsnoopError) as exc:
+    except (PtpError, PtpIpError, btsnoop.BtsnoopError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     except OSError as exc:

@@ -89,6 +89,14 @@ def test_raw_reports_an_unsupported_opcode(
     assert "OPERATION_NOT_SUPPORTED" in capsys.readouterr().out
 
 
+def test_raw_rejects_too_many_params_gracefully(
+    camera_address: tuple[str, int], capsys: pytest.CaptureFixture[str]
+) -> None:
+    # PTP only allows 5 params, providing 6 should throw ValueError and exit 1
+    assert main(_args(camera_address, "raw", "0x1001", "1", "2", "3", "4", "5", "6")) == 1
+    assert "PTP allows at most 5 operation parameters" in capsys.readouterr().err
+
+
 def test_raw_can_dump_the_data_phase_to_a_file(
     camera_address: tuple[str, int], tmp_path: Path
 ) -> None:
