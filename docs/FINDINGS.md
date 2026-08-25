@@ -23,20 +23,23 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | 2 erreicht — **Live View auf dem Raspberry läuft** (Bond → AP → PTP/IP → JPEG-Frames, 24.08. 21:46, Beweis `docs/proof/`) |
-| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** (21:28, `passkey=53437`) · **0x2005-WiFi-Start akzeptiert** (offene Frage 1 beantwortet) · **AP-Join** (polkit-Fix, ~30 s) · **Live-View-Frames über PTP/IP 15740** (offene Frage 2 beantwortet; Kamera-IP 192.168.0.10) |
+| **Phase** | Phase A erreicht — **WiFi-API Phase A (Read-only Property-/Storage-Inventar) steht** (Tests und CLI abgeschlossen, 25.08. 2026) |
+| **Erreicht** | 38 Operationen, 20 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** (21:28, `passkey=53437`) · **0x2005-WiFi-Start akzeptiert** · **AP-Join** (polkit-Fix, ~30 s) · **Live-View-Frames über PTP/IP 15740** · **Phase A Inventar-API + CLI** (`props` Kommando für Properties und Storage, 25.08.) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22). |
 | **Offenes Gate** | keines im Basissystem. Betriebs-Feinschliff: ThoTiTiMe-autoconnect-Ausnahme gilt noch (Pi-seitig), bluetoothd-Debug-Override (`-d`) noch aktiv — beides kosmetisch. |
-| **Nächster Schritt** | **v0.2.0 released** (Tag + GitHub-Release mit Wheel-Asset; Repo PUBLIC). R2 History-Bereinigung DURCHGEFÜHRT (24.08. spät): `git filter-repo --replace-text` (AP-PSK + SSID aus aller Historie), force-push Branch+Tag, Pi frisch geklont (venv/Services übernommen). Guard-Redesign: die committete Muster-Datei war selbst das Leck — `.secret-patterns` jetzt gitignored + Vorlage committet (b4ef5ac). **Restrisiko:** Alt-Commits per SHA auf GitHub abrufbar bis Server-GC; vollständige Entfernung via GitHub-Support (AP-PSK rotiert kameraseitig, Rest gering). Danach: Hardware-Batterie E1-E3 + `liveview --duration`. |
+| **Nächster Schritt** | **Phase A Feld-Messung**: Verifikation des `0x90CA` PTP-Array/Raw-Formats an der echten Hardware mit `skyshutter props`. Danach Phase B (Property write & events) vorbereiten. |
 | **Danach** | Sobald Live View auf dem Raspberry läuft: die Fernsteuer-Liste ([referenz.md](referenz.md), „Was sich fernsteuern lässt") an der Hardware durchmessen — Zoom, Belichtung, von „erschlossen" zu „gemessen". Danach CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-24 (21:46 — Live View läuft) |
+| **Stand vom** | 2026-08-25 (Phase A API & CLI fertig) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
-`nikon.py` ist weiterhin ausschließlich gegen den Simulator getestet.
+`nikon.py` ist weiterhin ausschließlich gegen den Simulator getestet. Das
+neu implementierte Phase-A-Inventar (Properties & Storage) wartet auf die
+erste physische Hardware-Verifikation, um das Annahmeformat für `0x90CA` zu
+bestätigen.
 
 ---
 
@@ -47,6 +50,10 @@ oft mehr wert als die Frage.
 
 ### Offen
 
+- [ ] **Welches exakte Datenformat liefert `0x90CA` (GET_VENDOR_PROP_CODES)?**
+      Aktueller Code in `nikon.py` (`_parse_code_list`) nimmt ein Standard PTP-
+      Array (uint32 Count + uint16 Items) mit Fallback auf einen rohen uint16-Run
+      an. Verifikation an der echten Hardware ausstehend.
 - [x] **Startet `0x01` auf `0x2005` den Access Point?** **JA** — mit
       vorhandenem Classic-Bond akzeptiert (24.08. 21:29, „accepted“), AP
       broadcastet nach ~80 s. Beantwortet 24.08.
