@@ -148,3 +148,16 @@ def test_the_event_poll_speaks_the_newer_dialect(camera_address: tuple[str, int]
     host, port = camera_address
     with NikonCamera.open(host, port=port, timeout=5) as camera:
         assert camera.get_events() == []
+
+
+def test_event_channel_ping_pong(camera_address: tuple[str, int]) -> None:
+    host, port = camera_address
+    with PtpIpConnection(host, port=port, timeout=5) as connection:
+        # ping() does nothing if events are not connected
+        connection.ping()
+        # Trigger ping
+        connection.ping()
+        # We expect a PONG back on the event socket
+        pong = connection.poll_event(timeout=1.0)
+        assert pong is not None
+        assert pong.type == 14  # PacketType.PONG

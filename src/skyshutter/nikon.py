@@ -9,6 +9,7 @@ truth and every high level helper here checks it before firing.
 from __future__ import annotations
 
 import logging
+import struct
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -356,6 +357,14 @@ class NikonCamera:
     def get_property_u32(self, code: int) -> int:
         raw = self.get_property(code)
         return int.from_bytes(raw[:4], "little") if len(raw) >= 4 else 0
+
+    def set_property(self, code: int, value: bytes) -> None:
+        """Set raw value of a device property."""
+        self.connection.transaction(OperationCode.SET_DEVICE_PROP_VALUE, (code,), data=value)
+
+    def set_property_u32(self, code: int, value: int) -> None:
+        """Set uint32 value of a device property."""
+        self.set_property(code, struct.pack("<I", value))
 
     @staticmethod
     def _parse_code_list(data: bytes) -> list[int]:

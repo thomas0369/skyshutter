@@ -94,3 +94,12 @@ def test_storage_ids_and_info_agree(camera_address: tuple[str, int]) -> None:
     assert ids == [0x50000001]
     assert info.storage_id == 0x50000001
     assert info.max_capacity == 32 * 1024**3
+
+
+def test_write_property_value(camera_address: tuple[str, int]) -> None:
+    host, port = camera_address
+    with NikonCamera.open(host, port=port, timeout=5) as camera:
+        # Shutter speed starts at 0 in the simulator
+        assert camera.get_property_u32(NikonProperty.SHUTTER_SPEED) == 0
+        camera.set_property_u32(NikonProperty.SHUTTER_SPEED, 42)
+        assert camera.get_property_u32(NikonProperty.SHUTTER_SPEED) == 42

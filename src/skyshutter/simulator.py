@@ -146,6 +146,7 @@ class _Handler(socketserver.BaseRequestHandler):
     def handle(self) -> None:
         sock: socket.socket = self.request
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        sock.settimeout(5.0)
         try:
             while True:
                 packet = read_packet(sock)
@@ -173,14 +174,23 @@ class _Handler(socketserver.BaseRequestHandler):
             log.warning("unhandled %s", packet.type_name)
 
     def handle_operation(self, sock: socket.socket, packet: Packet) -> None:
-        _, opcode, transaction_id = struct.unpack("<IHI", packet.payload[:10])
+        data_phase, opcode, transaction_id = struct.unpack("<IHI", packet.payload[:10])
         # Parameters follow the ten header bytes, four bytes each. Property
         # reads need them -- without, every property looks like the same one.
         raw = packet.payload[10:]
         params = tuple(
             struct.unpack_from("<I", raw, offset)[0] for offset in range(0, len(raw) - 3, 4)
         )
-        code, data = self.server.operation(opcode, params)
+        incoming_data = b""
+        if data_phase == 2:  # DataPhase.OUT
+            start = read_packet(sock)
+            if start.type != PacketType.START_DATA:
+                log.warning("expected START_DATA, got %s", start.type_name)
+            end = read_packet(sock)
+            if end.type != PacketType.END_DATA:
+                log.warning("expected END_DATA, got %s", end.type_name)
+            incoming_data = end.payload[4:]  # skip transaction_id
+        code, data = self.server.operation(opcode, params, incoming_data)
         log.info("operation 0x%04X -> 0x%04X (%d bytes)", opcode, code, len(data))
         if data:
             send_packet(
@@ -218,13 +228,22 @@ class SimulatorServer(socketserver.ThreadingTCPServer):
             NikonProperty.LENS_FOCAL_MAX: 3000,
         }
 
-    def operation(self, opcode: int, params: tuple[int, ...] = ()) -> tuple[int, bytes]:
+    def operation(
+        self, opcode: int, params: tuple[int, ...] = (), incoming_data: bytes = b""
+    ) -> tuple[int, bytes]:
         if opcode == OperationCode.GET_DEVICE_INFO:
             return ResponseCode.OK, self.device_info.pack()
         if opcode == OperationCode.GET_DEVICE_PROP_VALUE:
             code = params[0] if params else 0
             if code in self.properties:
                 return ResponseCode.OK, struct.pack("<I", self.properties[code])
+            return ResponseCode.OPERATION_NOT_SUPPORTED, b""
+        if opcode == OperationCode.SET_DEVICE_PROP_VALUE:
+            code = params[0] if params else 0
+            if code in self.properties:
+                if len(incoming_data) >= 4:
+                    self.properties[code] = struct.unpack("<I", incoming_data[:4])[0]
+                    return ResponseCode.OK, b""
             return ResponseCode.OPERATION_NOT_SUPPORTED, b""
         if opcode == OperationCode.GET_PARTIAL_OBJECT:
             # (handle, offset, length) -- hand back that slice of the frame.
