@@ -112,6 +112,28 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 26.08.2026 (00:12) — Download-Pfad an der HW: 16-MP-Foto bytegenau auf dem Pi
+Aufbau:     `skyshutter download --list` / `--last 1` (neue CLI, committet).
+            `GetObjectHandles` (alle Stores) → `GetObjectInfo` (Name, Größe)
+            → `GetPartialObject` in 1-MiB-Blöcken (so holt es auch die App;
+            `GetObject` 0x1009 benutzt sie nie, referenz.md).
+Belegt:     - **Listing:** echte Karteninventur — DSCN0027–0032.JPG +
+              DSCN0031.MP4, Handles + Größen korrekt.
+            - **Download DSCN0032.JPG: 3.593.725 B = exakt die ObjectInfo-
+              Größe; JPEG-Marker ffd8…ffd9 intakt; Auflösung 4608×3456.**
+            - Simulatortest: Capture erzeugt Objekte, Listing/Info/Download
+              prüfen den ganzen Pfad ohne Hardware (166 Tests).
+Folge:      **Der 4K-Workflow ist komplett und gemessen:** Stream (Framing)
+              + `shoot` (16 MP auf SD) + `download` (bytegenau auf den Pi).
+Fallen dieser Nacht (Ops-Bericht):
+            - `pkill -f remote-start` in einem SSH-Kommando, das auch den
+              Start enthält, tötet die eigene Shell (Muster matcht die
+              cmdline des äußeren bash). Kill und Start trennen.
+            - AP bleibt nach PTP-Disconnect für neue Joins zu, auch bei
+              laufendem BLE-Hold (bekannt, wiedergesehen); nur der volle
+              Zyklus (Hold killen → RPA-Cleanup → neu wecken) öffnet ihn
+              wieder.
+
 ### 25.08.2026 (23:49) — Fernauslöser 9207 am laufenden Live View: Aufnahme + Stream koexistieren
 Aufbau:     Testskript `tools/capture_test.py` (eigene PTP-Session; Stream-
             Dienst dafür gestoppt — Single-Client). ControlMode 1 →
