@@ -72,8 +72,21 @@ while true; do
     # Aufraeumen: Toete den BLE-Hold-Prozess, falls er noch laeuft
     if kill -0 $PID_BLE > /dev/null 2>&1; then
         echo "Toete BLE-Hold-Prozess ($PID_BLE)..."
-        kill -9 $PID_BLE
+        kill $PID_BLE
+        sleep 2
+        kill -9 $PID_BLE 2>/dev/null
     fi
+
+    # Zombie-LE-Links aufloesen (kill -9 hinterlaesst offene Verbindungen,
+    # die die Kamera am erneuten Advertising hindern -- gemessen 25.08.).
+    # NUR die rotierende RPA (Alias P1100) trennen, NIE den Classic-Bond 7C:B8:DA:A6:4F:FE.
+    for RPA in $(bluetoothctl devices Connected 2>/dev/null | grep 'P1100' | awk '{print $2}'); do
+        if [ "$RPA" != "7C:B8:DA:A6:4F:FE" ]; then
+            echo "Loese Zombie-LE-Link $RPA ..."
+            bluetoothctl disconnect "$RPA" >/dev/null 2>&1
+            bluetoothctl remove "$RPA" >/dev/null 2>&1
+        fi
+    done
 
     echo "Warte 5 Sekunden vor dem naechsten Versuch..."
     sleep 5
