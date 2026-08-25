@@ -7,6 +7,7 @@ import json
 import logging
 import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 from . import btsnoop, config, discovery, lssec
@@ -533,6 +534,8 @@ def cmd_set(args: argparse.Namespace) -> int:
 def cmd_bundle(args: argparse.Namespace) -> int:
     import dataclasses
 
+    from .ptp import PropertyDesc
+
     out = args.out if args.out else Path(time.strftime("bundle-%Y%m%d-%H%M%S"))
     out.mkdir(parents=True, exist_ok=True)
     with NikonCamera.open(
@@ -543,19 +546,69 @@ def cmd_bundle(args: argparse.Namespace) -> int:
         timeout=args.timeout,
     ) as camera:
         assert camera.device_info is not None
-        (out / "device-info.json").write_text(
-            json.dumps(dataclasses.asdict(camera.device_info), indent=2)
+
+        def _save(name: str, write: Callable[[], object]) -> None:
+            """One failed section must not cost the rest of the bundle."""
+            try:
+                write()
+            except Exception as exc:
+                (out / f"{name}-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+
+        info = camera.device_info
+        _save(
+            "device-info",
+            lambda: (out / "device-info.json").write_text(
+                json.dumps(dataclasses.asdict(info), indent=2)
+            ),
         )
-        (out / "props.json").write_text(json.dumps(_prop_snapshot(camera), indent=2))
-        events = [{"code": f"0x{c:04X}", "param": p} for c, p in camera.get_events()]
-        (out / "events.json").write_text(json.dumps(events, indent=2))
-        # One live frame, best effort: a failed frame must not cost the rest.
-        try:
+
+        def _dump_props() -> None:
+            codes = (
+                set(camera.device_info.device_properties_supported) if camera.device_info else set()
+            )
+            try:
+                codes.update(camera.vendor_property_codes())
+            except Exception:
+                pass
+            entries: dict[str, object] = {}
+            for code in sorted(codes):
+                entry: dict[str, object] = {}
+                try:
+                    raw = camera.property_desc_raw(code)
+                    entry["raw"] = raw.hex()
+                    try:
+                        d = PropertyDesc.parse(raw)
+                        entry["desc"] = {
+                            "data_type": f"0x{d.data_type:04X}",
+                            "access": _access_name(d.access),
+                            "default": d.default_value,
+                            "current": d.current_value,
+                            "min": d.minimum,
+                            "max": d.maximum,
+                            "step": d.step,
+                            "values": d.enumeration,
+                        }
+                    except Exception as exc:
+                        entry["parse_error"] = f"{type(exc).__name__}: {exc}"
+                except Exception as exc:
+                    entry["fetch_error"] = f"{type(exc).__name__}: {exc}"
+                entries[f"0x{code:04X}"] = entry
+            (out / "props.json").write_text(json.dumps(entries, indent=2))
+
+        _save("props", _dump_props)
+
+        def _dump_events() -> None:
+            events = [{"code": f"0x{c:04X}", "param": p} for c, p in camera.get_events()]
+            (out / "events.json").write_text(json.dumps(events, indent=2))
+
+        _save("events", _dump_events)
+
+        def _dump_frame() -> None:
             for frame in camera.stream_live_view(fps=0):
                 (out / "frame.jpg").write_bytes(frame)
                 break
-        except Exception as exc:
-            (out / "frame-error.txt").write_text(f"{type(exc).__name__}: {exc}\n")
+
+        _save("frame", _dump_frame)
         print(f"bundle -> {out}")
     return 0
 

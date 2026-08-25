@@ -518,6 +518,15 @@ class NikonCamera:
         result = self.connection.transaction(NikonOperation.GET_VENDOR_PROP_CODES)
         return self._parse_code_list(result.data)
 
+    def property_desc_raw(self, code: int) -> bytes:
+        """The descriptor of one property as the camera sent it, unparsed.
+
+        Diagnostics path: when ``PropertyDesc.parse`` rejects a real Nikon
+        dataset, the raw bytes are what the parser has to learn from.
+        """
+        result = self.connection.transaction(OperationCode.GET_DEVICE_PROP_DESC, (code,))
+        return result.data
+
     def property_desc(self, code: int) -> PropertyDesc:
         """The descriptor (type, access, value range) of one device property."""
         result = self.connection.transaction(OperationCode.GET_DEVICE_PROP_DESC, (code,))

@@ -191,7 +191,13 @@ def test_bundle_collects_everything_in_one_directory(
     info = json.loads((out / "device-info.json").read_text())
     assert "COOLPIX" in info["model"]
     props = json.loads((out / "props.json").read_text())
-    assert props["properties"]
+    assert props
+    # Every entry carries either a parsed descriptor or a recorded failure;
+    # descriptors additionally keep the raw bytes for offline diagnosis.
+    for entry in props.values():
+        assert "desc" in entry or "fetch_error" in entry
+        if "desc" in entry:
+            assert "raw" in entry
     json.loads((out / "events.json").read_text())
     frame = (out / "frame.jpg").read_bytes()
     assert frame[:2] == b"\xff\xd8"
