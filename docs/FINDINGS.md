@@ -28,7 +28,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
 | **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
-| **Nächster Schritt** | CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo) — Framing-Basis steht: Zoom 0–31 Schritte (log-Kurve), AF-Area, ISO/EV, Auslöser, Download. |
+| **Nächster Schritt** | Rig offline (Mango weg) — physisch prüfen. Danach: `tools/hw/hw_cvprobe.py` mit System-python3 auf dem Pi gegen 127.0.0.1:8080 (Decode-ms, CPU-ms/Frame, Centroid-Std) → CV-Design finalisieren.astro-cv-tracker-Reste auf der Pi-Platte prüfen. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,45 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (CV-Block Start: Pi-Inventar; Rig-Ausfall) — Hailo-8 & CV-Stack bestätigt; Probe durch Netz-Ausfall blockiert
+Aufbau:     Read-only-Inventar auf dem R2140 (`lspci`, `dpkg`, venv/import-
+            Proben, Last). Danach Vorbereitung der Centroid-Probe gegen
+            127.0.0.1:8080 — **Rig wurde vorher unerreichbar** (s. u.).
+Belegt:     - **Pi 5 (CM5-Basis) mit echtem Hailo-8** (lspci: Co-processor
+              Hailo-8, rev 01; `/dev/hailo0`). HailoRT 4.20 + TAPPAS 3.31 +
+              `python3-hailort` + rpicam-Postprocessing installiert;
+              Last ~0,4 — NPU ungenutzt.
+            - **CV-Interpreter = System-python3** (numpy, cv2, PIL, hailo
+              importierbar); das skyshutter-venv hat KEINES davon (bleibt
+              bewusst stdlib-only). CV läuft also als eigener Prozess
+              unter System-python3.
+            - Mitgelieferte HEF-Modelle (yolov5/6, SCRFD, ResNet) sind für
+              Stern-Centroiden irrelevant — klassische CV (Threshold +
+              Connected Components + Momente) ist Stufe 1; Hailo reserviert
+              für spätere DNN-Aufgaben.
+            - Vorgängerprojekt astro-cv-tracker lief auf diesem Pi
+              (FINDINGS 23.08., Login-Trail) — Reste auf Platte nicht
+              geprüft (Ausfall kam davor).
+            - **Rig-Ausfall ab ~13:0x Uhr:** Mango 192.168.1.143 nicht
+              mehr erreichbar (Gateway antwortet, ARP tot → „No route to
+              host", Ports 2222/8080 zu). Physisch zu prüfen (Strom/
+              Reboot). Stream-Dienst-Zustand danach unbekannt.
+Design-     (1) **Eingang:** MJPEG-Tap am Stream-Dienst (HTTP localhost,
+skizze:        bewiesen per Client-Probe) — CV als eigener Prozess, der
+              stabile Dienst wird nicht angefasst. (2) **Steuerkanal:**
+              Kamera erlaubt genau EINEN PTP-Client, den hält der Stream-
+              Dienst → Steuerbefehle (Zoom/ISO/Auslöser) müssen als
+              HTTP-Endpunkte AM Stream-Dienst entstehen, nicht als zweite
+              PTP-Session. (3) **Detektion Stufe 1:** Perzentil-Threshold +
+              größte Komponente + Momente → Centroid; Kennzahlen: Decode-ms,
+              CPU-ms/Frame, Centroid-Std (Jitter-Bindung). (4) **Aktor
+              später:** AZ-GTi-Mount via FTDI (bevorzugt; WLAN-PSK fehlt,
+              bei Thomas) — Centroid-Drift → Slew. Nachtvalidierung
+              ausständig (Tag-Szene misst nur Decode + Jitter).
+Folge:      Probe-Skript steht lokal (`tools/hw/hw_cvprobe.py`, auch als
+              Prüfartefakt) und muss nach Rig-Rückkehr auf den Pi
+              (System-python3!) und einmal gegen den laufenden Stream.
 
 ### 26.08.2026 (LV-Auflösung + Stream-Umstellung) — Vollauflösung 1552×1162 verfügbar und live
 Aufbau:     EINE Verbindung, ohne ControlMode: StartLiveView + 10×
