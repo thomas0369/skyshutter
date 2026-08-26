@@ -116,6 +116,39 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 26.08.2026 (Abend: Vorgängerprojekt gesichtet + Stern-Tracker gebaut) — astro-cv-tracker ist recycelbar; Track-Kette synthetisch bewiesen
+Aufbau:     Sichtung `~/projekte_hardware/astro-cv-tracker` (lief auf DIESEM
+            Pi), Bau `tools/cv/star_tracker.py` (System-python3), Smoke-
+            Tests am Tag-Stream + Synthetik-Validierung der Track-Logik.
+Belegt:     - **Vorgänger-Kontext:** Der R2140 war der Astro-CV-Tracker-Pi:
+              Nikon P1100 per HDMI-Grabber, AZ-GTi per Lynx-Astro-FTDI-
+              EQDIR (indi), Modus-A-Centroid (numpy-only), Mount-Loop mit
+              ACK+Retry-Commands, boot-sicher paused, ZMQ-Detektionen auf
+              tcp://127.0.0.1:5555 (Publisher bindet, JSON `DetectionFrame`).
+              docs/MOUNT_CONTROL_SPEC.md dokumentiert alle Fallen (Port-
+              konflikt, Auto-Chase, Slow-Joiner-Drops). **Integrationspfad:
+              unser WiFi-Tap ersetzt den HDMI-Capture-Prozess; Mount-Loop
+              bleibt unverändert.**
+            - **Alte Units liefen noch:** astro-loop + astro-dash aktiv
+              (Backend=mock — sicher, keine Bewegung); astro-capture
+              crash-loopte (Grabber fehlt) → gestoppt (reversibel).
+              Kein /dev/ttyUSB*: FTDI-Kabel des Mounts NICHT angeschlossen.
+            - **star_tracker.py:** bg-relativer Threshold (bg+rel·(peak−bg),
+              Kontrast-Gate gegen Schwarzbild — Rezept des Vorgängers),
+              ≤254-Kappe (Sättigungslehre von heute), Flächenfilter
+              [min,max], Top-N nach Intensitätsmasse, intensitätsgewichtete
+              Subpixel-Centroide, Nearest-Neighbor-Assoziation mit px-Gate,
+              CSV-Log + Per-Track-Statistik. Smoke am Tag-Stream: 0 Tracks
+              ist KORREKT (Median=255 bei 85 % Sättigung → Kontrast-Gate
+              greift; nachts bg≈0 → kein Gate). Decode avg 4,6 ms/Frame.
+            - **Synthetik-Beweis der Kette:** 3 Punkte → 3 Blobs exakt an
+              Soll-Position → 3 stabile Tracks über 4 Frames (kein Split,
+              kein Riss); Subpixel-Statistik stimmt auf den Erwartungswert.
+Folge:      Nachtvalidierung ist jetzt ein Einzeiler pro Lauf:
+              `python3 tools/cv/star_tracker.py --duration 120 --out …`.
+              Danach Kalibrierung von min/max-area an echten Sternen und
+              die AZ-GTi-Integration (FTDI anstecken + Backend indi).
+
 ### 26.08.2026 (CV-Probe am laufenden Stream) — Pipeline-Rauschfloor 0,06 px; CPU-only reicht locker
 Aufbau:     Zwei Probes gegen den laufenden Vollauflösungs-Stream
             (localhost:8080, System-python3 + cv2/numpy, KEIN Extra-
