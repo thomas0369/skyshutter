@@ -27,8 +27,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps + SELBST-HEILEND (26 s, bewiesen)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert (log-Skala 0–31 Schritte, 4,3→155+ mm)** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | Alle Kern-Features an der HW bewiesen (inkl. Auto-Recovery, 26 s). Rest-Feinheiten: Zoom-Kurve >155 mm ohne EXIF-Stütze, Schrittwerte >1, `0x941E`-Zielbrennweite, Event-Kanal (2. Socket), `0x9520/21`. Danach: CV-Pipeline auf den Stream. |
-| **Nächster Schritt** | (a) `0x941E` testen (Zielbrennweite statt Schritte zählen — wäre das ergonomische Framing-Interface). (b) CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo). |
+| **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
+| **Nächster Schritt** | CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo) — Framing-Basis steht: Zoom 0–31 Schritte (log-Kurve), AF-Area, ISO/EV, Auslöser, Download. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,29 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Event-Kanal + 0x941E) — Event-Socket schweigt beim Capture; 941E verworfen
+Aufbau:     Zwei Weckzyklen, je EINE Verbindung. Event-Test: poll_event vor
+            und 5 s nach capture(). 941E: Parameterproben mit Foto+EXIF als
+            Wirkungsnachweis (Anker = wide-Anschlag, EXIF 4,3 mm).
+Belegt:     - **Event-Socket bleibt beim Capture stumm:** Handles 42→43
+              (Bild geschrieben), aber NULL Pakete auf dem Event-Kanal
+              (auch idle davor keins). Die Kamera nutzt den Event-Socket
+              nur für Ping-Antworten — Ereignisse kommen über 0x941C-
+              Polling (macht die App so, referenz.md). Unser Polling-Ansatz
+              ist damit der richtige, kein Handlungsbedarf.
+            - **0x941E (PowerZoomByFocalLength) verworfen:**
+              `(10,)`→0x201D · `(10,0)`→0x201D · `(10,1)`→0x2006
+              (ParameterNotSupported — 2. Parameter wird geprüft) ·
+              `(1000,)`→OK, keine Bewegung · `(2400,)`→OK, keine Bewegung ·
+              **`(60000,)`→OK, danach Connection reset by peer** — die
+              Kamera kappt selbst die Session. Parametersemantik nicht
+              erschließbar (mm/100-mm-äquiv-Hypothesen widerlegt oder
+              wirkungslos), Befehl kann die Session töten. **Produktion:
+              0x9016-Schritte + Kalibrierkurve.**
+Folge:      Zwei Restpunkte der Validierungsliste geschlossen (negativ,
+              aber entschieden). Offen bleiben nur 0x9520/21 (Auto-
+              Übertragung) und die CV-Pipeline als nächster Block.
 
 ### 26.08.2026 (Auto-Recovery + Zoom-Kalibrierung) — Dienst heilt sich selbst; Schritte→mm-Kurve gemessen
 Aufbau:     Recovery: WLAN-Radio am Pi aus (12:19:11) → Stream stirbt an
