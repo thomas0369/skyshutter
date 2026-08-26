@@ -24,11 +24,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | | |
 |---|---|
 | **Phase** | **Fernauslöser und Stream stehen, manuelle Belichtung abgeriegelt** — Modus, Blende und Verschluss bleiben per Firmware read-only, unabhängig von der Radposition auf M |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** (172 Tests) |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **optischer Zoom fernsteuerbar (EXIF-bewiesen)** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | **M-Modus hebt Schreibsperre nicht auf:** Auch wenn das physische Wählrad auf M steht, bleiben Verschluss/Blende/Programm auf read-only (Desc + Write-Versuch, 26.08.). Fernsteuerung hier abgeriegelt. |
-| **Nächster Schritt** | (a) `0x9016`-Zoom-Wirkung messen. (b) CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo). |
+| **Offenes Gate** | Zoom-Schrittverhalten nur grob vermessen (6 Schritte = 4,3→10,7 mm); Linearität/Anzahl bis 126 mm offen. 0x941E als Positions-Alternative ungetestet. Danach: CV-Pipeline auf den Stream. |
+| **Nächster Schritt** | (a) Zoom-Kalibrierung: Schrittzahl→Brennweite-Kurve (für Astro-Framing reicht evtl. „fahre auf wide-Anschlag, dann N Schritte"). (b) CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -111,6 +111,39 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Zoom + LV-Diag) — 0x9016 bewegt das Objektiv: EXIF-Beweis
+Aufbau:     Vier Weckzyklen, je EINE Verbindung. Zoom-Wirkung über EXIF
+            FocalLength (TIFF 0x920A) frisch geschossener Fotos: 64 kB
+            Kopf via GetPartialObject, TIFF-Walk ohne Pillow.
+Belegt:     - **Zoom fährt real:** Baseline 4,3 mm (= wide-Anschlag) →
+              6× ZOOM_CONTROL (0,1) → **10,7 mm** EXIF (DSCN0033→0035).
+              ~1,1 mm Real-Brennweite pro tele-Schritt (erster Datenpunkt,
+              Linearität ungemessen). Die App kann es, wir können es.
+            - **Anschlag-Verhalten:** 2× wide am wide-Ende antwortet OK
+              OHNE Bewegung (Kamera war schon bei 4,3 mm); ab dem 3. wide
+              in Folge → INVALID_PARAMETER 0x201D. OK heißt also nicht
+              "bewegt", nur "angenommen".
+            - **focal-Property (0x5005) ist für Zoom-Feedback unbrauchbar:**
+              konstant 3500 vor/während/nach der Fahrt (Sentinel oder
+              gecacht). Zoom-Position steht nur im EXIF des Bildes — oder
+              künftig evtl. über 0x941E abfragbar.
+            - **LV-Status lügt im Remote-Modus:** StartLiveView antwortet
+              dauerhaft DEVICE_BUSY 0x2019 und 0xD1A2 (lv_status) bleibt
+              false — TROTZDEM liefert GetLiveViewImg (0x9203) fortlaufend
+              0x2001-Frames (~25,7 kB, Remote-Größe). Genau so läuft der
+              Stream-Dienst. Nie auf lv_status/StartLiveView-Erfolg gate'n.
+            - **AF-Fläche (0x9205), AF-Drive (0x90C1) und GetEvent (0x941C,
+              4 Byte 00000000 = kein Event) funktionieren im M-Modus.**
+              AF-Drive beendet dabei den LV (danach A00B bei Frame-Holung).
+            - 0x9203 nach AF-Drive → **0xA00B NotLiveView** (LV muss neu).
+Folge:      `zoom()` funktioniert; für das Astro-Rig ist der optische Zoom
+              fernsteuerbar. Nächste Verfeinerung: Schrittzahl→mm-Kurve
+              vermessen (linear?), 0x941E als Positions-Alternative testen.
+Fallen:     - Ein Messskript, das alles am Ende in EIN json sammelt, verliert
+              ALLES bei einem Crash — Zeilen sofort ausgeben (flush=True).
+            - capture() mitten in der Messung: neuestes JPG über max(handle)
+              finden (DSCN-Nummern steigen mit Handle).
 
 ### 26.08.2026 (Write-Kampagne) — Property-Writes an der HW: ISO/Drive/EV gehen, Rest ist read-only (steht so im Desc)
 Aufbau:     Drei Weckzyklen, je EIN Python-Prozess/EINE Verbindung
