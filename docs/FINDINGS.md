@@ -23,12 +23,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **CV-Design messfertig finalisiert** (Rauschfloor 0,06 px, CPU-only reicht) — Nachtvalidierung an echten Sternen ist der nächste Messschritt |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View 1552×1162 FULL, systemd selbstheilend (26 s + bluetoothd-Race + LV-Prohibit-Retry)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Pipeline-Rauschfloor 0,06 px gemessen** (173 Tests) |
+| **Phase** | **Tracking-Kette end-to-end bewiesen (Stream→star_tracker→ZMQ→Mount-Loop, mock)** — Produktion fehlt nur Nacht-Parameter + FTDI/indi/Unpark |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View 1552×1162 FULL, systemd selbstheilend (26 s + bluetoothd-Race + LV-Prohibit-Retry)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Rauschfloor 0,06 px** · **ZMQ-Brücke zum AZ-GTi-Mount-Loop im Mock bewiesen (30/30 Frames)** (173 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
 | **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
-| **Nächster Schritt** | (a) Rig-Hygiene: Mango-WAN auf statisch/DHCP-Reservierung (Netzteil-Ausfall zeigte: Lease + DNS-Forward fragil), Pi-Strom von Mango trennen (Brownout nahm den Pi mit). (b) CV-Nachtvalidierung: Sterne anvisieren, Blob-Flächen messen → Flächenfilter parametrisieren. (c) Tracking-Aktor AZ-GTi via FTDI (WLAN-PSK vom Mount-Display bei Thomas). |
+| **Nächster Schritt** | (a) **Keepalive-Messung** gegen den 55-s-PTP-Tod (GetEvent-Poll alle 30 s? Kamera-Auto-Off verlängern?) — VOR der Nacht. (b) CV-Nachtvalidierung: `python3 tools/cv/star_tracker.py --duration 120 --out /tmp/stars.csv --zmq` an echten Sternen → min/max-area kalibrieren. (c) FTDI-Kabel anschließen + `ASTRO_BACKEND=indi` + Unpark (erst dann echte Bewegung). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,34 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Nacht: ZMQ-Brücke bewiesen + PTP-Kapputt-Fund) — End-to-End Tracker→Loop läuft; Kamera kappt passive Sessions nach ~55 s
+Aufbau:     star_tracker um `--zmq` (Publisher bind :5555, DetectionFrame-
+            JSON exakt im Vorgängerformat) und `--selftest-publish`
+            (synthetische Drift-Detektion, szenenunabhängig) erweitert.
+            Telemetrie-Mitschnitt auf :5556 während des Publishens.
+Belegt:     - **E2E-Schnittstellenbeweis:** 30 synthetische Frames auf
+              :5555 → astro-loop empfängt und verarbeitet: 30/124
+              Telemetrieframes mit target.valid=true, err_x_norm=0,8 und
+              vel_x_norm=0,08/s korrekt aus der Drift berechnet; Mount
+              bleibt connected+parked (keine Bewegung ohne Unpark —
+              sicheres Design bestätigt). **Kette fertig:** Stream →
+              star_tracker → ZMQ → Mount-Loop. Für Produktion fehlen nur
+              Nacht-Blob-Parameter, FTDI-Kabel + Backend indi + Unpark.
+            - **NEUER Betriebs-Befund:** Kamera kappt die PTP-Session
+              nach ~55 s PASSIVEN Streamings (Journal: „Broken pipe",
+              19:12:38 Start → 19:13:33 Tod). Heute Vormittag hielten
+              aktive Zugriffe (Zoom/Download/Capture) die Session stunden-
+              lang. Verdacht: Auto-Power-Off-Timer zählt Bedienung, nicht
+              LV-Konsum. **Offen:** Keepalive-Messen — hält ein 30-s-
+              GetEvent-Poll (0x941C) oder Property-Poll die Session wach?
+              Evtl. auch Kamera-Menü „Auto-Abschaltung" verlängern.
+            - Shell-Lehre: `cmd1 && cd X && nohup Y & Z` legt die GANZE
+              Kette in den Hintergrund (Z läuft ohne cd) — absolute Pfade
+              oder `;`-Trennung.
+Folge:      Für Nachtläufe: Wrapper heilt den 55-s-Tod zwar, aber jeder
+              Zyklus kostet einen Weckzyklus (~90 s). Keepalive-Messung
+              VOR der Nachtvalidierung spart Frust.
 
 ### 26.08.2026 (Abend: Vorgängerprojekt gesichtet + Stern-Tracker gebaut) — astro-cv-tracker ist recycelbar; Track-Kette synthetisch bewiesen
 Aufbau:     Sichtung `~/projekte_hardware/astro-cv-tracker` (lief auf DIESEM

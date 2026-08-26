@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -78,6 +79,7 @@ class Blob:
     area: int
     peak: int
     mass: float  # summed intensity above background -- the ranking key
+    bbox: list[int]  # [left, top, w, h] from the connected-component stats
 
 
 def detect_blobs(
@@ -86,11 +88,17 @@ def detect_blobs(
     min_area: int,
     max_area: int,
     top: int,
+    min_contrast: float = 1.0,
 ) -> list[Blob]:
-    """Background-relative threshold, connected components, subpixel centroids."""
+    """Background-relative threshold, connected components, subpixel centroids.
+
+    ``min_contrast`` is the gate the astro-cv-tracker project proved: a
+    uniform frame (black sky, lens cap) must yield zero blobs, so peak and
+    background have to differ by at least this much.
+    """
     bg = float(np.median(gray))
     peak = float(gray.max())
-    if peak - bg < 1.0:  # uniform frame: no contrast, no blobs (black sky + cap on)
+    if peak - bg < min_contrast:  # uniform frame: no contrast, no blobs
         return []
     thr = min(bg + thresh_rel * (peak - bg), 254.0)
     mask = (gray > thr).astype(np.uint8)
@@ -110,7 +118,13 @@ def detect_blobs(
         blob_mass = values[ys, xs]
         cx = float((xs * blob_mass).sum() / mass)
         cy = float((ys * blob_mass).sum() / mass)
-        blobs.append(Blob(cx, cy, area, int(gray[ys, xs].max()), mass))
+        bbox = [
+            int(stats[i, cv2.CC_STAT_LEFT]),
+            int(stats[i, cv2.CC_STAT_TOP]),
+            int(stats[i, cv2.CC_STAT_WIDTH]),
+            int(stats[i, cv2.CC_STAT_HEIGHT]),
+        ]
+        blobs.append(Blob(cx, cy, area, int(gray[ys, xs].max()), mass, bbox))
     blobs.sort(key=lambda b: b.mass, reverse=True)
     return blobs[:top]
 
@@ -184,9 +198,87 @@ def main() -> int:
     ap.add_argument("--max-area", type=int, default=2000)
     ap.add_argument("--top", type=int, default=12, help="brightest blobs per frame")
     ap.add_argument("--gate", type=float, default=30.0, help="association radius in px")
+    ap.add_argument(
+        "--min-contrast",
+        type=float,
+        default=1.0,
+        help="required peak-background gap; 0 disables the gate (tests)",
+    )
+    ap.add_argument(
+        "--zmq",
+        action="store_true",
+        help="publish DetectionFrame JSON (astro-cv-tracker format) on tcp://127.0.0.1:5555",
+    )
+    ap.add_argument(
+        "--selftest-publish",
+        action="store_true",
+        help="ZMQ interface test: publish one synthetic drifting detection every "
+        "0.5 s for --duration seconds, no camera needed",
+    )
     args = ap.parse_args()
+    if args.selftest_publish:
+        args.zmq = True
+
+    publisher = None
+    if args.zmq:
+        import zmq  # lazy: only needed when bridging to the mount controller
+
+        ctx = zmq.Context.instance()
+        publisher = ctx.socket(zmq.PUB)
+        publisher.setsockopt(zmq.LINGER, 0)
+        publisher.bind("tcp://127.0.0.1:5555")
+        print("zmq_pub: tcp://127.0.0.1:5555", flush=True)
+        time.sleep(1.0)  # slow-joiner window: give subscribers time to connect
+
+    def publish(frame_id: int, dets: list[tuple[int, Blob]], width: int, height: int) -> None:
+        assert publisher is not None
+        payload = {
+            "ts": round(time.time(), 3),
+            "frame_id": frame_id,
+            "mode_hint": "A",
+            "detections": [
+                {
+                    "track_id": tid,
+                    "cls": "blob",
+                    "confidence": round(blob.peak / 255.0, 4),
+                    "bbox_xywh": blob.bbox,
+                    "bbox_center_normalized": [
+                        round(blob.cx / width, 5),
+                        round(blob.cy / height, 5),
+                    ],
+                }
+                for tid, blob in dets
+            ],
+        }
+        publisher.send_string(json.dumps(payload, separators=(",", ":")))
 
     deadline = time.monotonic() + args.duration
+
+    if args.selftest_publish:
+        assert publisher is not None
+        fid = 0
+        while time.monotonic() < deadline:
+            fid += 1
+            cx = 0.30 + 0.02 * fid  # drifts right, in normalized 0..1
+            det = {
+                "track_id": 1,
+                "cls": "blob",
+                "confidence": 0.9,
+                "bbox_xywh": [int(cx * 1552) - 5, 584, 10, 10],
+                "bbox_center_normalized": [round(min(cx, 0.95), 5), 0.5],
+            }
+            payload = {
+                "ts": round(time.time(), 3),
+                "frame_id": fid,
+                "mode_hint": "A",
+                "detections": [det],
+            }
+            publisher.send_string(json.dumps(payload, separators=(",", ":")))
+            if fid % 10 == 0:
+                print(f"published {fid}", flush=True)
+            time.sleep(0.5)
+        print(f"selftest_done: {fid} frames published", flush=True)
+        return 0
     tracks: dict[int, Track] = {}
     next_id = 1
     rows: list[list[object]] = []
@@ -200,7 +292,14 @@ def main() -> int:
             continue
         dt_ms = (time.perf_counter() - t0) * 1000.0
         n_frames += 1
-        blobs = detect_blobs(gray, args.thresh_rel, args.min_area, args.max_area, args.top)
+        blobs = detect_blobs(
+            gray,
+            args.thresh_rel,
+            args.min_area,
+            args.max_area,
+            args.top,
+            min_contrast=args.min_contrast,
+        )
         now = round(time.time(), 3)
         matches = associate(tracks, blobs, args.gate)
         for tid, bi in matches:
@@ -208,6 +307,7 @@ def main() -> int:
             tracks[tid].add(blob)
             rows.append([now, tid, round(blob.cx, 2), round(blob.cy, 2), blob.area, blob.peak])
         matched = {bi for _, bi in matches}
+        frame_dets: list[tuple[int, Blob]] = [(tid, blobs[bi]) for tid, bi in matches]
         for bi, blob in enumerate(blobs):  # unmatched blobs open new tracks
             if bi in matched:
                 continue
@@ -216,6 +316,10 @@ def main() -> int:
             tr.add(blob)
             tracks[tr.ident] = tr
             rows.append([now, tr.ident, round(blob.cx, 2), round(blob.cy, 2), blob.area, blob.peak])
+            frame_dets.append((tr.ident, blob))
+        if publisher is not None:
+            h, w = gray.shape
+            publish(n_frames, frame_dets, w, h)
         if n_frames > 1:  # first frame pays the cv2 init (~1 s), skip in timing
             decode_ms.append(dt_ms)
         if n_frames % 30 == 0:
