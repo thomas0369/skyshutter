@@ -117,6 +117,30 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 26.08.2026 (21:50–22:15: Farb-/Dämmerungs-Serie am Live-Stream) — „rosa" ist Weißabgleich-Drift, kein Transportfehler; Sättigung löst sich langsam auf
+Aufbau:     Pixelstatistik-Sonden gegen den laufenden MJPEG-Stream
+            (HSV-Hue/Sat/Val getrennt je Bildhälfte, Grau-Histogramm),
+            parallel 30-s-Kalibrier-Subläufe des star_tracker.
+Belegt:     - **Nutzerbeobachtung „halb rosa" eingegrenzt:** Gemessen um
+              22:05 ist der GESAMTE Frame gleichmäßig magenta (83 % aller
+              Pixel im Hue-Band 240–360°, links=rechtsexakt gleiche Stats:
+              sat=113, val=212 beidseits) — das ist AE/WB-Drift bei
+              Dämmerlicht, KEIN Bildfehler und keine Seitenasymmetrie.
+              Falls im Browser tatsächlich nur EINE Hälfte rosa wirkt:
+              angebrochener Multipart-Puffer beim Client → hartes Neuladen;
+              Server liefert vollständige Frames (JPEG-Carve prüft SOI+EOI).
+            - Fürs Tracking irrelevant: Tracker arbeitet in IMREAD_GRAYSCALE,
+              Farbcast fällt raus.
+            - **Dämmerungsverlauf:** 20:40 median=255/max=255 (Vollsättigung)
+              → 21:02 unverändert → ~22:05 median=176/max=226. Aber:
+              Kalibrier-Subläufe um 22:07–22:10 fanden NULL Blobs — der
+              Himmel hatte noch keinerlei Struktur über dem Threshold.
+            - Stream-Flapping hält an (Tod alle 1–2 min, Heilung ~90 s);
+              Watcher-Probes trafen mehrfach exactly die Lücken.
+Folge:      E1 braucht echtes Dunkel (~22:30+) UND Bestätigung, dass die
+              Kamera aufs Sternfeld zeigt (nur Thomas physisch prüfbar —
+              Kamera-LCD!). WLAN-Flapping läuft als Dauerstörung weiter.
+
 ### 26.08.2026 (21:23–21:50: E5-Messblock Zoom/Props) — Multi-/Negativschritte bewiesen, 0x90CA existiert nicht, Brennweiten-Grenzen dekodiert
 Aufbau:     Drei Session-Käufe über stop-stream→BLE-weck→join→Measure→
             restart (Skripte /tmp/e5_v*.sh auf dem Pi). Mehrere Neuanläufe:
