@@ -23,8 +23,8 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Fernauslöser und Stream stehen, manuelle Belichtung abgeriegelt** — Modus, Blende und Verschluss bleiben per Firmware read-only, unabhängig von der Radposition auf M |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps + SELBST-HEILEND (26 s, bewiesen)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert (log-Skala 0–31 Schritte, 4,3→155+ mm)** (172 Tests) |
+| **Phase** | **Stream auf Vollauflösung umgestellt (1552×1162, ~6 fps, live bewiesen)** — CV-Pipeline kann starten |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View 1552×1162 FULL + 15-fps-Remote-Modus, systemd selbstheilend (26 s, bewiesen)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert (log-Skala 0–31 Schritte, 4,3→155+ mm)** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
 | **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
@@ -115,6 +115,27 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (LV-Auflösung + Stream-Umstellung) — Vollauflösung 1552×1162 verfügbar und live
+Aufbau:     EINE Verbindung, ohne ControlMode: StartLiveView + 10×
+            GET_LIVE_VIEW_IMG mit Timing; danach enter_remote_mode + 10×.
+            Danach Wrapper-Umstellung und Client-Probe am MJPEG-Port.
+Belegt:     - **FULL-Modus (ohne ControlMode 1): 1552×1162, ~60 kB/Frame,
+              Abruf 0,10 s** (nach Warm-up; erste 0,2–0,4 s) ≈ 6–10 fps.
+              REMOTE-Modus: 640×480, ~17,5 kB, 0,03 s, ~28 fps. Voll-
+              auflösung = **5,8× die Pixel** des Remote-Modus.
+            - **StartLiveView antwortet im FULL-Modus SOFORT OK** (0x2001,
+              erster Versuch). Die DEVICE_BUSY/2019-Geschichte ist remote-
+              modus-spezifisch — die „LV-Statuslüge" gilt nur nach
+              ControlMode 1.
+            - **Stream-Dienst umgestellt** (Wrapper: `--remote --fps 25` →
+              `--fps 6` ohne --remote): Client-Probe liefert 12 Frames à
+              ~59 kB (avg 59.177 B) = Vollauflösung live auf 8080.
+              Fürs Astro-Framing/CV: Pixel > Framerate (6 fps reichen zum
+              Nachführen); Remote-Modus bleibt per `--remote` verfügbar.
+Folge:      CV-Pipeline bekommt 1552×1162 als Eingang. Bandbreite: 60 kB ×
+              6 fps ≈ 360 kB/s — läuft auf dem Kamera-AP (gemessen inkl.
+              Transfer in der 0,1-s-Abrufdauer).
 
 ### 26.08.2026 (Event-Kanal + 0x941E) — Event-Socket schweigt beim Capture; 941E verworfen
 Aufbau:     Zwei Weckzyklen, je EINE Verbindung. Event-Test: poll_event vor
