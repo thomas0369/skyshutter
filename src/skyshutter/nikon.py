@@ -447,6 +447,20 @@ class NikonCamera:
         raw = self.get_property(code)
         return int.from_bytes(raw[:2], "little") if len(raw) >= 2 else 0
 
+    def battery_level(self) -> int | None:
+        """Standard PTP BatteryLevel (0x5001), uint8 percent.
+
+        ``None`` when the camera does not offer the property -- then the
+        only honest answer is the charge icon on the display. Reading it
+        right after session open is free; reading it later would need a
+        second client, and the camera has exactly one slot.
+        """
+        try:
+            raw = self.get_property(0x5001)
+        except PtpError:
+            return None
+        return raw[0] if raw else None
+
     def set_property(self, code: int, value: bytes) -> None:
         """Set raw value of a device property."""
         self.connection.transaction(OperationCode.SET_DEVICE_PROP_VALUE, (code,), data=value)

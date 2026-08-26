@@ -142,6 +142,14 @@ def test_simulator_offers_what_the_real_camera_offers(
         assert camera.supports(NikonOperation.ZOOM_CONTROL)
 
 
+def test_battery_level_is_readable_percent(camera_address: tuple[str, int]) -> None:
+    """0x5001 read at session open -- the stream logs this every cycle."""
+    host, port = camera_address
+    with NikonCamera.open(host, port=port, timeout=5) as camera:
+        level = camera.battery_level()
+    assert level is None or 0 <= level <= 100
+
+
 def test_live_view_frame_carries_its_measurements(camera_address: tuple[str, int]) -> None:
     host, port = camera_address
     with NikonCamera.open(host, port=port, timeout=5) as camera, camera.live_view():

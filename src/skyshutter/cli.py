@@ -655,6 +655,10 @@ def cmd_stream(args: argparse.Namespace) -> int:
             friendly_name=config.client_name(args.name),
             timeout=args.timeout,
         ) as camera:
+            battery = camera.battery_level()
+            log.info(
+                "battery: %s", f"{battery} %" if battery is not None else "unavailable (no 0x5001)"
+            )
             for frame in camera.stream_live_view(
                 fps=args.fps,
                 remote_mode=getattr(args, "remote", False),
