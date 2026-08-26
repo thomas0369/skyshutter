@@ -116,6 +116,21 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 26.08.2026 (20:10: Akku + AP-Sofort-Tod) — BatteryLevel-Logging im Stream; Akku 100 %
+Aufbau:     Einmal-Read von 0x5001 nach Session-Ende des Streams versucht →
+            „No route to host" nach 3 s. Darauf `battery_level()` in
+            NikonCamera + INFO-Log beim Session-Aufbau in `cmd_stream`
+            (jede Wrapper-Session loggt jetzt gratis den Akkustand).
+Belegt:     - **Kamera schaltet ihren AP SEKUNDEN nach Session-Ende ab**
+              (nicht erst nach Auto-Off-Frist) — deshalb braucht jeder
+              Wrapper-Neustart den vollen Weckzyklus; Read außerhalb des
+              Client-Slots ist praktisch unmöglich.
+            - **BatteryLevel 0x5001: 100 %** (Journal „INFO skyshutter:
+              battery: 100 %") — Nachtlauf akkuseitig gesichert.
+            - 176 Tests (neu: battery_level-Integrationstest).
+Folge:      Akkustand ab jetzt über `journalctl -u skyshutter-stream |
+            grep battery` — Anzeige am Kamera-Display entfällt.
+
 ### 26.08.2026 (Abend II: Keepalive-Messung, 19:27–19:41) — GetEvent-Poll verlängert Sessions, echte Todesursache ist schwaches WLAN (−71 dBm)
 Aufbau:     `stream --keepalive-secs 25` (GetEvent 0x941C im Frame-Loop,
             gleicher Thread → kein Socket-Interleaving) + `-v` im Wrapper;
