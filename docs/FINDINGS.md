@@ -23,16 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Write-Kampagne durch** — ISO/Drive/EV an der HW schreibbar und gemessen (EV nur mit ⅓-Stop-Leiterwert, sonst 0x2007); Programm/Verschluss/Blende ACCESS_DENIED, exakt wie ihre Descs (read-only) |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **Belichtungs-Reader UND Writer an HW validiert** (172 Tests) |
+| **Phase** | **Fernauslöser und Stream stehen, manuelle Belichtung abgeriegelt** — Modus, Blende und Verschluss bleiben per Firmware read-only, unabhängig von der Radposition auf M |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | **Desc-Access dial-abhängig?** — Verschluss/Blende/Programm sind laut Desc read-only (gemessen: 0x200F); ob der Dial auf M die Flags dreht, ist ungemessen (braucht Thomas am Drehrad). Danach: Zoom `0x9016`-Wirkung messen. |
-| **Nächster Schritt** | (a) Thomas: Dial auf M stellen → `props --dump` + Write-Versuch Verschluss/Blende (desc-diff entscheidet). (b) `0x9016`-Zoom-Wirkung messen. (c) CV-Pipeline auf den Stream setzen. |
+| **Offenes Gate** | **M-Modus hebt Schreibsperre nicht auf:** Auch wenn das physische Wählrad auf M steht, bleiben Verschluss/Blende/Programm auf read-only (Desc + Write-Versuch, 26.08.). Fernsteuerung hier abgeriegelt. |
+| **Nächster Schritt** | (a) `0x9016`-Zoom-Wirkung messen. (b) CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-26 (Write-Kampagne durch: ISO/Drive/EV schreibbar, Rest read-only wie Desc) |
+| **Stand vom** | 2026-08-26 (Belichtungs-Properties vollständig kartiert; Astro-Stream+Auslöser stabil) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -135,12 +135,16 @@ Belegt:     - **ISO (0x500F) schreiben funktioniert** — 2× gemessen
               (bundle props.json: access-Feld) — ISO/EV/Drive als
               read/write. Das Deny-Muster war in der eigenen Messung vom
               Vortag ablesbar.
+            - **M-Modus hilft nicht:** Ein separater Messlauf bei physisch
+              auf "M" gestelltem Einstellrad (Readback "MANUAL") zeigte:
+              Die Descs für Verschluss/Blende/Programm bleiben stur auf
+              read-only, und der Schreibversuch endet weiterhin mit 0x200F.
+              Die Firmware blockiert die Belichtungssteuerung kategorisch.
             - FocusMode (0x500A) nicht beschrieben (Desc: read-only).
 Folge:      **Write-Gate geschlossen:** Alle beschreibbaren Props sind
               gemessen und funktionieren; die read-only-Antwort der Kamera
-              ist konsistent mit ihren Descs. Offene Teilfrage: ob die
-              Desc-Access-Flags dial-abhängig sind (Dial auf M → Blende/
-              Verschluss vielleicht read/write?). Braucht Thomas am Drehrad.
+              ist absolut. Manuelle Belichtungs-Steuerung ist für diese
+              Kamera-Familie (P1100/P900) über WLAN nicht vorgesehen.
 Fallen:     - ISO-Write überlebte einen Skript-Crash (falscher Methodenname
               `set_ev` → AttributeError NACH dem ersten Write) — Restore-
               Schritte IMMER am Ende laufen lassen, auch nach Fehlern;
