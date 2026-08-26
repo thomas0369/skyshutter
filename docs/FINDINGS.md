@@ -63,10 +63,14 @@ oft mehr wert als die Frage.
       Installationen dieselbe, was dagegen spricht, dass die Kamera darüber
       unterscheidet.
 - [ ] Verträgt die Kamera eine zweite Sitzung neben der Hersteller-App?
-- [ ] Wie groß sind die Live-View-Bilder wirklich, und welche Bildrate hält
-      die Kamera durch?
-- [ ] Lässt sich der Zoom über `0x9016` tatsächlich fahren, und in welchen
-      Schritten?
+- [x] **Wie groß sind die Live-View-Bilder wirklich, und welche Bildrate hält
+      die Kamera durch?** Remote-Modus (ControlMode 1): ~25–36 kB Frames,
+      Stream-Dienst hält 15 fps über Stunden (26.08., systemd-Dauerbetrieb).
+      Abgehakt 26.08.
+- [x] **Lässt sich der Zoom über `0x9016` tatsächlich fahren, und in welchen
+      Schritten?** **JA** — EXIF-bewiesen: 6× (0,1) = 4,3→10,7 mm (26.08.).
+      Ein Befehl = ein Schritt; größere Schrittwerte ungemessen. Abgehakt
+      26.08.
 - [ ] Was tun `0x2082`–`0x2087`? Sechs Characteristics, die die Hersteller-App
       **nicht kennt** — nur an der Kamera selbst zu erschließen.
 - [ ] Was sind die Properties `D303`, `D406`, `D407`? Ebenfalls in der App
