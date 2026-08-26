@@ -58,8 +58,21 @@ def test_this_camera_has_the_new_event_poll_and_not_the_old_one() -> None:
     failing loudly, which is the kind of bug that costs an evening.
     """
     measured = {
-        0x9016, 0x90C1, 0x90C2, 0x90C4, 0x90C8, 0x9201, 0x9202, 0x9203,
-        0x9205, 0x9207, 0x941C, 0x941E, 0x9520, 0x9521, 0x9522,
+        0x9016,
+        0x90C1,
+        0x90C2,
+        0x90C4,
+        0x90C8,
+        0x9201,
+        0x9202,
+        0x9203,
+        0x9205,
+        0x9207,
+        0x941C,
+        0x941E,
+        0x9520,
+        0x9521,
+        0x9522,
     }
     assert NikonOperation.GET_EVENT_EX in measured
     assert NikonOperation.GET_EVENT not in measured
@@ -158,3 +171,34 @@ def test_several_prohibit_reasons_can_hold_at_once() -> None:
     assert LiveViewProhibit.POWER_OFF in reason
     assert LiveViewProhibit.CARD_ERROR in reason
     assert LiveViewProhibit.LENS_RETRACTED not in reason
+
+
+def test_start_live_view_retries_through_a_transient_prohibit() -> None:
+    """Measured 26.08.2026: after a hard kill mid-stream the camera sets a
+    transient prohibit bit; live view must retry instead of failing once."""
+    from types import SimpleNamespace
+
+    camera = object.__new__(NikonCamera)
+    # IMAGE_IN_SDRAM twice, then the camera settles.
+    prohibitions = iter(
+        [
+            LiveViewProhibit.IMAGE_IN_SDRAM,
+            LiveViewProhibit.IMAGE_IN_SDRAM,
+            LiveViewProhibit(0),
+        ]
+    )
+    starts = {"count": 0}
+
+    class FakeConnection:
+        def transaction(self, opcode, raise_on_error=False, **_: object) -> SimpleNamespace:
+            starts["count"] += 1
+            return SimpleNamespace(ok=True, response_code=0x2001, data=b"")
+
+    camera.connection = FakeConnection()  # type: ignore[assignment]
+    camera.live_view_prohibit = lambda: next(prohibitions)  # type: ignore[method-assign]
+    camera.live_view_running = lambda: False  # type: ignore[method-assign]
+    camera.wait_until_ready = lambda **_: True  # type: ignore[method-assign]
+    camera._require = lambda *args, **kwargs: None  # type: ignore[method-assign]
+
+    camera.start_live_view(attempts=5, pause=0.0)
+    assert starts["count"] == 1  # started exactly once, after the bit cleared

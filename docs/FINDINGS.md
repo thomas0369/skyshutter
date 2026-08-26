@@ -28,7 +28,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
 | **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
-| **Nächster Schritt** | Rig offline (Mango weg) — physisch prüfen. Danach: `tools/hw/hw_cvprobe.py` mit System-python3 auf dem Pi gegen 127.0.0.1:8080 (Decode-ms, CPU-ms/Frame, Centroid-Std) → CV-Design finalisieren.astro-cv-tracker-Reste auf der Pi-Platte prüfen. |
+| **Nächster Schritt** | Kamera physisch neu starten/Funk-Reset (advertised nicht mehr; Akku im Verdacht) → `sudo systemctl start skyshutter-stream` → Stream prüfen → CV-Probe `python3 /tmp/hw_cvprobe.py` (System-python3) → CV-Design finalisieren. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,43 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Nach dem Rig-Stromausfall) — bluetoothd-Race behoben; StartLiveView-Verbot ist jetzt retrybar
+Aufbau:     Rückkehr des Rigs (ursprüngliche Ausfallursache war schlicht das
+            nicht gesteckte WAN-Kabel; Adresse .143 blieb, DNAT ok). Der
+            stream-Dienst kam allein hoch, scheiterte aber in drei Klassen,
+            die hier auseinandergelegt sind.
+Belegt:     - **Root cause A (Pi, kalter Boot):** `bluetoothctl list` LEER,
+              obwohl `hciconfig -a` hci0 UP RUNNING zeigte (BCM43455).
+              bluetoothd kam vor hci0 hoch und sieht danach dauerhaft
+              nichts. Einmal `systemctl restart bluetooth` → Controller
+              da, bleak-Scan findet die Kamera sofort. Der alte Zustand
+              ließ JEDEN Weckversuch 90 s ins Leere laufen ("Keine frischen
+              Zugangsdaten").
+            - **Wrapper-Fix (Step 1a):** vor jedem Weckversuch prüft der
+              Wrapper `bluetoothctl list`; leer → Neustart von bluetoothd
+              + 3 s. Damit heilt sich das Rig das Race künftig selbst.
+            - **Root cause B (Code):** WLAN-Join ok, aber `StartLiveView`
+              antwortete DEVICE_BUSY [0x2019] (0x9201) und der CLI STARB
+              SOFORT. Ursache: in `start_live_view()` wurde ein gesetztes
+              Prohibit-Bit (0xD1A4) als Sofort-Fehler behandelt statt in
+              den vorhandenen Retry-Loop zu laufen. Plausibel nach Hard-
+              Kill mitten im FULL-Stream (kein StopLiveView gesehen):
+              transient Bits wie IMAGE_IN_SDRAM / DURING_SHOOTING_COMMAND /
+              TEMPERATURE_RISE. Fix: Verbot wird im Loop retryt (Grund je
+              Versuch geloggt, Bit 31 maskiert wie die Vendor-App),
+              Frames-fließen-Fallback bleibt; Tests: Lens-Retracted-Test
+              auf attempts=1 verschnellert, neuer Unit-Test für transientes
+              Verbot (173 grün).
+            - **Aber:** danach advertisierte die Kamera NICHT mehr (bleak:
+              kein P1100 in 10 s; remote-start: "Kamera sendet nicht,
+              Verbindungsmenü offen? Funk-Reset nötig?"). Physischer
+              Kamera-Neustat bzw. Funk-Reset ausständig -- Verdacht
+              Akku nach einem Tag Dauer-FULL-Streaming oder Auto-Power-off
+              nach den fehlgeschlagenen Sessions.
+Folge:      Rig-Infrastruktur ist stromausfallresistent (A+B gefixt);
+              CV-Probe (tools/hw/hw_cvprobe.py) wartet auf den laufenden
+              Stream.
 
 ### 26.08.2026 (CV-Block Start: Pi-Inventar; Rig-Ausfall) — Hailo-8 & CV-Stack bestätigt; Probe durch Netz-Ausfall blockiert
 Aufbau:     Read-only-Inventar auf dem R2140 (`lspci`, `dpkg`, venv/import-

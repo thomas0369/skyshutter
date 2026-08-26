@@ -724,31 +724,40 @@ class NikonCamera:
         """Start live view, checking first why it might refuse.
 
         The vendor app reads the prohibit condition before it tries, and
-        retries up to ten times half a second apart while the camera says
-        busy. Both are worth copying: the check turns a bare error into a
-        named reason, and the camera does report busy on the first attempt.
+        retries while the camera says busy. Measured 26.08.2026 after the
+        service was hard-killed mid-stream (power outage, no StopLiveView):
+        the camera reports a transient prohibit bit and only clears it
+        after a few seconds -- so prohibit joins the retry loop instead
+        of failing the whole session at once. The vendor app ignores
+        bit 31 entirely; so do we.
         """
         self._require(NikonOperation.START_LIVE_VIEW, "live view")
 
-        reason = self.live_view_prohibit()
-        if reason:
-            raise PtpError(ResponseCode.DEVICE_BUSY, NikonOperation.START_LIVE_VIEW)
+        def prohibitions() -> LiveViewProhibit:
+            return self.live_view_prohibit() & ~LiveViewProhibit.INCOMPATIBLE_EXPOSURE_MODE
 
-        if self.live_view_running():
+        reason = prohibitions()
+        if not reason and self.live_view_running():
             log.debug("live view is already running, not starting it again")
             return
 
         for attempt in range(1, attempts + 1):
-            result = self.connection.transaction(
-                NikonOperation.START_LIVE_VIEW, raise_on_error=False
-            )
-            if result.ok:
-                self.wait_until_ready()
-                return
-            if result.response_code != ResponseCode.DEVICE_BUSY:
-                raise PtpError(result.response_code, NikonOperation.START_LIVE_VIEW)
-            log.debug("live view busy, attempt %d/%d", attempt, attempts)
+            if reason:
+                log.debug("live view prohibited by %r, attempt %d/%d", reason, attempt, attempts)
+            else:
+                result = self.connection.transaction(
+                    NikonOperation.START_LIVE_VIEW, raise_on_error=False
+                )
+                if result.ok:
+                    self.wait_until_ready()
+                    return
+                if result.response_code != ResponseCode.DEVICE_BUSY:
+                    raise PtpError(result.response_code, NikonOperation.START_LIVE_VIEW)
+                log.debug("live view busy, attempt %d/%d", attempt, attempts)
             time.sleep(pause)
+            if self.live_view_running():
+                return
+            reason = prohibitions()
         # Measured 25.08.2026 in remote mode (ControlMode 1): the camera
         # keeps answering DEVICE_BUSY to StartLiveView for ~30 s after the
         # mode switch while it is already preparing frames -- the vendor
@@ -762,6 +771,8 @@ class NikonCamera:
         if frame:
             log.debug("live view busy but frames are flowing, continuing")
             return
+        if reason:
+            log.warning("live view still prohibited after %d attempts: %r", attempts, reason)
         raise PtpError(ResponseCode.DEVICE_BUSY, NikonOperation.START_LIVE_VIEW)
 
     def end_live_view(self) -> None:

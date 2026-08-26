@@ -12,6 +12,15 @@ echo "=== skyshutter stream-wrapper start ==="
 while true; do
     CYCLE_START=$(date +%s)
 
+    # Stromausfall-Race (26.08.2026 gemessen): nach kaltem Boot kommt bluetoothd
+    # manchmal vor hci0 hoch und sieht dann NIEMALS einen Controller, bis der
+    # Daemon neu startet. Jeder BLE-Weckversuch laeuft sonst 90 s ins Leere.
+    if [ -z "$(bluetoothctl list 2>/dev/null)" ]; then
+        echo "1a. bluetoothd sieht keinen Controller - Neustart des Daemons..."
+        sudo -n systemctl restart bluetooth || systemctl restart bluetooth
+        sleep 3
+    fi
+
     echo "1. Wecke Kamera ueber BLE (remote-start.py)..."
     # --hold 300 haelt den BLE-Link fuer 5 Minuten, während wir streamen.
     $PYTHON "$DIR/tools/remote-start.py" --register skyshutter --hold 300 > /tmp/remote_start_run.log 2>&1 &

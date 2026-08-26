@@ -124,7 +124,11 @@ def test_nothing_blocks_live_view_on_the_simulator(camera_address: tuple[str, in
 def test_a_retracted_lens_stops_live_view_before_it_starts(
     camera_address: tuple[str, int], camera_server: SimulatorServer
 ) -> None:
-    """What the hardware did over USB, reproduced without hardware."""
+    """What the hardware did over USB, reproduced without hardware.
+
+    A persistent prohibit reason survives the retry loop and still fails
+    the call -- attempts=1 keeps the test fast.
+    """
     camera_server.properties[NikonProperty.LIVE_VIEW_PROHIBIT] = struct.pack(
         "<I", int(LiveViewProhibit.LENS_RETRACTED)
     )
@@ -132,7 +136,7 @@ def test_a_retracted_lens_stops_live_view_before_it_starts(
     with NikonCamera.open(host, port=port, timeout=5) as camera:
         assert LiveViewProhibit.LENS_RETRACTED in camera.live_view_prohibit()
         with pytest.raises(PtpError):
-            camera.start_live_view()
+            camera.start_live_view(attempts=1, pause=0.0)
 
 
 def test_downloading_walks_the_object_in_chunks(
