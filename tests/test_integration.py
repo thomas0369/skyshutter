@@ -68,6 +68,43 @@ def test_live_view_reports_busy_before_it_is_started(camera_address: tuple[str, 
         assert camera.get_live_view_frame() is None
 
 
+def _count_event_polls(camera: NikonCamera) -> list[int]:
+    """Wrap ``camera.get_events`` with a call counter; returns the counter box."""
+    calls: list[int] = [0]
+    original = camera.get_events
+
+    def counting() -> list[tuple[int, int]]:
+        calls[0] += 1
+        return original()
+
+    camera.get_events = counting  # type: ignore[method-assign]
+    return calls
+
+
+def test_stream_keepalive_polls_the_event_queue(camera_address: tuple[str, int]) -> None:
+    """The ~55 s session cutoff fix: with keepalive on, GetEvent is polled."""
+    host, port = camera_address
+    with NikonCamera.open(host, port=port, timeout=5) as camera:
+        calls = _count_event_polls(camera)
+        frames = 0
+        for _ in camera.stream_live_view(fps=0, keepalive_secs=1e-6):
+            frames += 1
+            if frames == 3:
+                break
+    assert frames == 3
+    assert calls[0] >= 1
+
+
+def test_stream_without_keepalive_never_polls_events(camera_address: tuple[str, int]) -> None:
+    host, port = camera_address
+    with NikonCamera.open(host, port=port, timeout=5) as camera:
+        calls = _count_event_polls(camera)
+        for i, _ in enumerate(camera.stream_live_view(fps=0)):
+            if i == 2:
+                break
+    assert calls[0] == 0
+
+
 def test_unsupported_operation_raises_with_the_response_code(
     camera_address: tuple[str, int],
 ) -> None:

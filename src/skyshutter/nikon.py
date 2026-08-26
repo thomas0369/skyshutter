@@ -835,18 +835,38 @@ class NikonCamera:
             return True
         raise PtpError(result.response_code, NikonOperation.SET_CONTROL_MODE)
 
-    def stream_live_view(self, fps: float = 15.0, remote_mode: bool = False) -> Iterator[bytes]:
+    def stream_live_view(
+        self,
+        fps: float = 15.0,
+        remote_mode: bool = False,
+        keepalive_secs: float = 0.0,
+    ) -> Iterator[bytes]:
         """Yield live view JPEG frames until the caller stops consuming.
 
         With ``remote_mode=True`` the app-style remote mode is entered
         first (small, fast frames; see :meth:`enter_remote_mode`).
+
+        ``keepalive_secs`` polls the event queue (0x941C) that often while
+        streaming. Measured on hardware: the camera cuts the PTP session
+        after ~55 s of pure frame pulling (auto power off counts operator
+        actions, not live-view consumption); interleaving a GetEvent poll
+        keeps the session alive -- the vendor app does the same.
         """
         interval = 1.0 / fps if fps > 0 else 0.0
         if remote_mode:
             self.enter_remote_mode()
+        last_poll = time.monotonic()
         with self.live_view(attempts=20, pause=1.0):
             while True:
                 started = time.monotonic()
+                if keepalive_secs > 0 and started - last_poll >= keepalive_secs:
+                    events = self.get_events()
+                    log.info(
+                        "keepalive: GetEvent poll (dt=%.1f s, %d events)",
+                        started - last_poll,
+                        len(events),
+                    )
+                    last_poll = time.monotonic()
                 frame = self.get_live_view_frame()
                 if frame:
                     yield frame

@@ -68,7 +68,10 @@ while true; do
                 # Full resolution (1552x1162, ~60 kB, ~6 fps measured 26.08.):
                 # NO --remote here -- ControlMode 1 would shrink frames to
                 # 640x480. Astro framing wants the pixels.
-                $PYTHON -m skyshutter.cli --host "$CAMERA_IP" stream --bind 0.0.0.0 --http-port 8080 --fps 6
+                # --keepalive-secs 25: measured 26.08. -- pure frame pulling
+                # dies after ~55 s (auto power off); a GetEvent poll resets it.
+                # -v: INFO so keepalive polls land in the journal.
+                $PYTHON -m skyshutter.cli -v --host "$CAMERA_IP" stream --bind 0.0.0.0 --http-port 8080 --fps 6 --keepalive-secs 25
                 echo "Stream-Server beendet."
             else
                 echo "Kamera-IP $CAMERA_IP ist nicht pingbar. Starte neu..."

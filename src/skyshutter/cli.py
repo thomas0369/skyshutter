@@ -146,6 +146,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="enter app-style remote mode (ControlMode 1): small ~36 KB frames, fast",
     )
+    stream.add_argument(
+        "--keepalive-secs",
+        type=float,
+        default=0.0,
+        help="poll the event queue (GetEvent) every N seconds while streaming; "
+        "keeps the camera's auto power off from cutting the session (~55 s)",
+    )
 
     raw = _subparser(sub, "raw", "send an arbitrary PTP operation (protocol spelunking)")
     raw.add_argument("opcode", type=_int)
@@ -649,7 +656,9 @@ def cmd_stream(args: argparse.Namespace) -> int:
             timeout=args.timeout,
         ) as camera:
             for frame in camera.stream_live_view(
-                fps=args.fps, remote_mode=getattr(args, "remote", False)
+                fps=args.fps,
+                remote_mode=getattr(args, "remote", False),
+                keepalive_secs=getattr(args, "keepalive_secs", 0.0),
             ):
                 buffer.publish(frame)
     except KeyboardInterrupt:
