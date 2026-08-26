@@ -117,6 +117,22 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 26.08.2026 (23:32–23:41: BLE-Wake tot) — Kamera sendet nicht mehr; E1 wartet auf physischen Check
+Aufbau:     Wrapper-Loop im Minutentakt-Retry (Journal), remote-start-
+            Log gelesen, bluetoothctl verifiziert.
+Belegt:     - Seit 23:32 Dauerausfall: alle ~90 s Weckversuch, jeder
+              scheitert mit „Keine frischen Zugangsdaten"; Stage-2-Fehler
+              im Log: **„Kamera sendet nicht (Verbindungsmenü offen?
+              Funk-Reset nötig?)"** — Kamera adver tisiert BLE nicht.
+            - Pi-Seite sauber: Controller sichtbar, classic bond 7C:B8:
+              DA:A6:4F:FE vorhanden.
+            - Akku war 20:10/20:32 bei 100 % (Journal) — kein dokumentierter
+              Tiefstand; Verdacht: Auto-Power-Off der Kamera selbst nach dem
+              abendlichen Session-Hopping (Stream starb alle 1–2 min) oder
+              Verbindungsmenü hängt.
+Folge:      PHYSISCH bei Thomas: Kamera prüfen (ein/an, Akku, WLan-Menü),
+            dann reicht der Wrapper — er retryt bis dahin automatisch.
+
 ### 26.08.2026 (21:50–22:15: Farb-/Dämmerungs-Serie am Live-Stream) — „rosa" ist Weißabgleich-Drift, kein Transportfehler; Sättigung löst sich langsam auf
 Aufbau:     Pixelstatistik-Sonden gegen den laufenden MJPEG-Stream
             (HSV-Hue/Sat/Val getrennt je Bildhälfte, Grau-Histogramm),
