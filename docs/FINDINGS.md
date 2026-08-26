@@ -28,7 +28,7 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
 | **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
-| **Nächster Schritt** | (a) **Keepalive-Messung** gegen den 55-s-PTP-Tod (GetEvent-Poll alle 30 s? Kamera-Auto-Off verlängern?) — VOR der Nacht. (b) CV-Nachtvalidierung: `python3 tools/cv/star_tracker.py --duration 120 --out /tmp/stars.csv --zmq` an echten Sternen → min/max-area kalibrieren. (c) FTDI-Kabel anschließen + `ASTRO_BACKEND=indi` + Unpark (erst dann echte Bewegung). |
+| **Nächster Schritt** | (a) **Nachtvalidierung CV** (jetzt ~22:30 ab Dunkelheit): `python3 tools/cv/star_tracker.py --duration 120 --out /tmp/stars.csv --zmq` an echten Sternen → min/max-area kalibrieren. WLAN-Tode (−71 dBm) überbrückt der Wrapper in ~60–90 s — Lücken tolerierbar. (b) Physisch: Pi-Antenne/Position relativ Kamera prüfen (Metall weg), Kamera-Akku am Display. (c) FTDI-Kabel anschließen + `ASTRO_BACKEND=indi` + Unpark (erst dann echte Bewegung). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,31 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Abend II: Keepalive-Messung, 19:27–19:41) — GetEvent-Poll verlängert Sessions, echte Todesursache ist schwaches WLAN (−71 dBm)
+Aufbau:     `stream --keepalive-secs 25` (GetEvent 0x941C im Frame-Loop,
+            gleicher Thread → kein Socket-Interleaving) + `-v` im Wrapper;
+            12-min-Monitor auf dem Pi (journal tail + minütlicher Frame-Pull).
+Belegt:     - Keepalive-Mechanismus sauber: Poll dt=25,0–26,2 s, Kamera
+              antwortet jedes Mal OK (0 events).
+            - Session-Längen MIT Poll: 181 s / ~45 s / 165 s / ~110 s
+              (Baseline ohne Poll: 55 s). Verlängernd, aber keine Stabilität;
+              HTTP-Verfügbarkeit 8/12 minütlicher Probes.
+            - Zwei Todesarten: „Broken pipe" (RST) UND „timed out" — keine
+              deterministische Timer-Konstanz.
+            - **`iw station dump`: Signal −71 dBm, RX 18 MBit/s** (Direkt-
+              verbund Pi↔Kamera-AP). Schwach — erklärt Streuung und Timeouts.
+            - Korrektur zu Abend I: der „55 s Auto-Power-Off-Verdacht" war
+              vermutlich schon WLAN-Tod, kein Timer.
+Folge:      (1) Keepalive-Flag bleibt produktiv (harmlos, im Mittel
+              verlängernd; 2 Unit-Tests, 175 grün). (2) Vor Nachtläufen
+              PHYSISCH prüfen: Pi-Position/Antennenausrichtung relativ zur
+              Kamera, Metall des Rigs weg vom Funkweg; notfalls besserer
+              WLAN-Stick am Pi. (3) Kamera-Akkustand am Display checken
+              (nach Tagessession; PTP-BatteryLevel nur ohne Stream lesbar,
+              Client-Slot konfligiert — offene Kleinigkeit). (4) Der Wrapper
+              heilt jeden Tod in ~60–90 s — für die Nachtvalidierung der
+              Blob-Parameter reicht das; star_tracker überbrückt Lücken.
 
 ### 26.08.2026 (Nacht: ZMQ-Brücke bewiesen + PTP-Kapputt-Fund) — End-to-End Tracker→Loop läuft; Kamera kappt passive Sessions nach ~55 s
 Aufbau:     star_tracker um `--zmq` (Publisher bind :5555, DetectionFrame-
