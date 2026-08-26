@@ -24,11 +24,11 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 | | |
 |---|---|
 | **Phase** | **Fernauslöser und Stream stehen, manuelle Belichtung abgeriegelt** — Modus, Blende und Verschluss bleiben per Firmware read-only, unabhängig von der Radposition auf M |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **optischer Zoom fernsteuerbar (EXIF-bewiesen)** (172 Tests) |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps + SELBST-HEILEND (26 s, bewiesen)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert (log-Skala 0–31 Schritte, 4,3→155+ mm)** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | Zoom-Schrittverhalten nur grob vermessen (6 Schritte = 4,3→10,7 mm); Linearität/Anzahl bis 126 mm offen. 0x941E als Positions-Alternative ungetestet. Danach: CV-Pipeline auf den Stream. |
-| **Nächster Schritt** | (a) Zoom-Kalibrierung: Schrittzahl→Brennweite-Kurve (für Astro-Framing reicht evtl. „fahre auf wide-Anschlag, dann N Schritte"). (b) CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo). |
+| **Offenes Gate** | Alle Kern-Features an der HW bewiesen (inkl. Auto-Recovery, 26 s). Rest-Feinheiten: Zoom-Kurve >155 mm ohne EXIF-Stütze, Schrittwerte >1, `0x941E`-Zielbrennweite, Event-Kanal (2. Socket), `0x9520/21`. Danach: CV-Pipeline auf den Stream. |
+| **Nächster Schritt** | (a) `0x941E` testen (Zielbrennweite statt Schritte zählen — wäre das ergonomische Framing-Interface). (b) CV-Pipeline auf den Stream setzen (Astro-Tracking via Hailo). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,37 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Auto-Recovery + Zoom-Kalibrierung) — Dienst heilt sich selbst; Schritte→mm-Kurve gemessen
+Aufbau:     Recovery: WLAN-Radio am Pi aus (12:19:11) → Stream stirbt an
+            TCP-Timeout; Radio an → Beobachtung über journalctl. Kalibrierung:
+            EINE Verbindung; wide bis Anschlag (INVALID_PARAMETER zählt als
+            solcher), dann Treppen à 8 Schritte tele mit Foto + EXIF je Stufe.
+Belegt:     - **Auto-Recovery funktioniert:** Stream-Tod 12:19:31 („network
+              error: timed out", sauberes Sterben nach 20 s — kein Hängen),
+              Wrapper räumt auf (BLE-Hold killen, RPA-Zombies lösen), neuer
+              Weckzyklus; nach Radio-an: Creds 12:19:44, Join 12:19:56,
+              Stream 12:19:57. **26 s Recovery, beide 15740er-Sockets +
+              8080 wieder da, ohne manuelles Zutun.** Wrapper-while-Schleife
+              + systemd Restart=always greifen genau wie gebaut. Simuliert
+              das „Kamera war aus"-Szenario von der Vornacht.
+            - **Zoom-Kurve (focal via EXIF, M-Modus, remote mode):**
+              0 Schritte = 4,3 mm (wide-Anschlag; INVALID_PARAMETER beim
+              ersten wide = Anschlags-Signal) · 8 = 14,4 mm · 16 = 49,5 mm ·
+              24 = 155,0 mm · 31 = Tele-Anschlag (0x201D, EXIF-Punkt fehlt —
+              Kamera spec 3000 mm äquiv.).
+            - **Schritte sind logarithmisch, nicht linear:** Brennweite ≈
+              ×3,3 je 8 Schritte (~16 % Zuwachs/Schritt). Der frühere
+              „~1,1 mm/Schritt" galt nur für den untersten Kurvenbereich.
+              Fein-Framing unten, grob oben — für Astro-Framing vom
+              wide-Anschlag aus zählen.
+            - Ein 0x201D auf 0x9016 heißt „Anschlag erreicht" (wieder
+              bestätigt: wide sofort, tele nach 31).
+Folge:      Recovery-Offenpunkt ist geschlossen; Zoom fürs Framing
+              kalibrierbar (0–31 Schritte, Anker = wide-Anschlag).
+              Feinheiten offen: Kurve oberhalb 155 mm ohne EXIF-Stütze,
+              Schrittwerte >1 ungetestet, 0x941E (Zielbrennweite) als
+              elegantere Alternative ungetestet.
 
 ### 26.08.2026 (Zoom + LV-Diag) — 0x9016 bewegt das Objektiv: EXIF-Beweis
 Aufbau:     Vier Weckzyklen, je EINE Verbindung. Zoom-Wirkung über EXIF
