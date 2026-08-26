@@ -116,6 +116,25 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 26.08.2026 (20:40: Abendsonde — Dämmerung sättigt den LiveView komplett) — Autopilot für die Nachtvalidierung läuft
+Aufbau:     Frame-Sonde gegen den laufenden Stream (System-python3, cv2),
+            plus darkness-wait.sh auf dem Pi (nohup): alle 5 min Sonde,
+            ab median<100 ohne 255er-Riesenblob automatisch ein 120-s-
+            Kalibriellauf des star_tracker mit CSV nach /tmp/stars.csv.
+Belegt:     - **Dämmerungs-LiveView clippt:** median=255, max=255, größter
+              Blob 1.432.073 px (Vollframe) um 20:40. Gleiche Sättigungs-
+              lehre wie die Tagszene — AE-Gain zieht auf, bis alles 255 ist.
+              Stern-Tracking geht erst bei gefallenem Median (Dunkelheit).
+            - MJPEG-Sonden-Lehre: Stream beginnt mit Multipart-Boundary;
+              Sonden müssen zum JPEG-Start (\xff\xd8) schneiden, sonst
+              liefert cv2.imdecode None.
+            - Nacht-Autopilot: darkness-wait.sh (PID 68245) triggert den
+              Kalibriellauf selbst; Report /tmp/darkness_report.txt.
+            - Stream-FAILs im Watcher-Rhythmus sind WLAN-Tod-Fenster
+              (normal, Wrapper heilt in 60–90 s) — kein Skriptfehler.
+Folge:      Auswertung, wenn Report Kalibriellauf zeigt. Danach min/max-area
+            aus /tmp/stars.csv kalibrieren (E1-Gate V1).
+
 ### 26.08.2026 (20:10: Akku + AP-Sofort-Tod) — BatteryLevel-Logging im Stream; Akku 100 %
 Aufbau:     Einmal-Read von 0x5001 nach Session-Ende des Streams versucht →
             „No route to host" nach 3 s. Darauf `battery_level()` in
