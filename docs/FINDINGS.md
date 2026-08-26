@@ -23,12 +23,12 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Stream auf Vollauflösung umgestellt (1552×1162, ~6 fps, live bewiesen)** — CV-Pipeline kann starten |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View 1552×1162 FULL + 15-fps-Remote-Modus, systemd selbstheilend (26 s, bewiesen)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert (log-Skala 0–31 Schritte, 4,3→155+ mm)** (172 Tests) |
+| **Phase** | **CV-Design messfertig finalisiert** (Rauschfloor 0,06 px, CPU-only reicht) — Nachtvalidierung an echten Sternen ist der nächste Messschritt |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View 1552×1162 FULL, systemd selbstheilend (26 s + bluetoothd-Race + LV-Prohibit-Retry)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Pipeline-Rauschfloor 0,06 px gemessen** (173 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
 | **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
-| **Nächster Schritt** | Kamera physisch neu starten/Funk-Reset (advertised nicht mehr; Akku im Verdacht) → `sudo systemctl start skyshutter-stream` → Stream prüfen → CV-Probe `python3 /tmp/hw_cvprobe.py` (System-python3) → CV-Design finalisieren. |
+| **Nächster Schritt** | (a) Rig-Hygiene: Mango-WAN auf statisch/DHCP-Reservierung (Netzteil-Ausfall zeigte: Lease + DNS-Forward fragil), Pi-Strom von Mango trennen (Brownout nahm den Pi mit). (b) CV-Nachtvalidierung: Sterne anvisieren, Blob-Flächen messen → Flächenfilter parametrisieren. (c) Tracking-Aktor AZ-GTi via FTDI (WLAN-PSK vom Mount-Display bei Thomas). |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
@@ -115,6 +115,39 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (CV-Probe am laufenden Stream) — Pipeline-Rauschfloor 0,06 px; CPU-only reicht locker
+Aufbau:     Zwei Probes gegen den laufenden Vollauflösungs-Stream
+            (localhost:8080, System-python3 + cv2/numpy, KEIN Extra-
+            Weckzyklus — HTTP-Tap only).
+Belegt:     - **Durchsatz: 6,1 fps** (40 Frames in 6,6 s) über localhost
+              HTTP — Leitung ist kein Flaschenhals.
+            - **Kosten pro Frame:** JPEG-Decode ~5 ms im Dauerlauf
+              (erste Frame 1.083 ms = cv2-Init), Threshold+CC+Momente
+              wenige ms; gesamt 3–26 ms/Frame — weit unter dem 167-ms-
+              Budget bei 6 fps. **Für Centroid-Tracking ist die CPU
+              genug, die Hailo-NPU bleibt für spätere DNN-Aufgaben frei.**
+            - **Erste Probe: null Blobs.** Ursache: Tagszene zu 85,5 %
+              gesättigt (max_brightness 255 überall) → 99,5-Perzentil-
+              Schwelle klemmt auf 255, `img > 255` findet nichts.
+              Lehre: **adaptiver Threshold muss auf ≤254 gekappt werden**
+              (in Probe 2 fixiert).
+            - **Zweite Probe (Threshold ≤254): größtes Blob 1,43 Mpx**
+              (= der gesättigte Himmel), Centroid über 40 Frames:
+              **σ = 0,01/0,014 px, max. Drift 0,06 px.** Das ist der
+              Rauschfloor der GESAMTEN Kette (Sensor-JPEG → PTP →
+              HTTP → decode → Threshold → Momente) — zwei Größenordnungen
+              unter jeder Guiding-Toleranz. Für kleine Stern-Blobs wird
+              das Rauschen größer (kleinere Mittelungsbasis), aber der
+              Pipeline-Anteil ist damit gemessen: vernachlässigbar.
+Design-     **FINAL:** CV-Prozess = System-python3, localhost-MJPEG-Tap,
+entscheid:  Perzentil-Threshold (≤254 kappen) + Flächenfilter für
+              punktförmige Quellen, Momente für Subpixel-Centroid;
+              Auslöser/Zoom später als Endpunkte am Stream-Dienst
+              (Ein-Client-Limit). Aktor: AZ-GTi via FTDI. Offen bleibt
+              NUR die Nachtvalidierung an echten Sternen (Execution,
+              keine Design-Unbekannte) — inkl. Stern-Blob-Flächenbereich,
+              der den Flächenfilter parametrisiert.
 
 ### 26.08.2026 (Nach dem Rig-Stromausfall) — bluetoothd-Race behoben; StartLiveView-Verbot ist jetzt retrybar
 Aufbau:     Rückkehr des Rigs (ursprüngliche Ausfallursache war schlicht das
