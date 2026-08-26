@@ -51,9 +51,9 @@ oft mehr wert als die Frage.
 ### Offen
 
 - [ ] **Welches exakte Datenformat liefert `0x90CA` (GET_VENDOR_PROP_CODES)?**
-      Aktueller Code in `nikon.py` (`_parse_code_list`) nimmt ein Standard PTP-
-      Array (uint32 Count + uint16 Items) mit Fallback auf einen rohen uint16-Run
-      an. Verifikation an der echten Hardware ausstehend.
+      ~~Verifikation ausstehend.~~ **ERLEDIGT 26.08.: Die Operation wird nicht
+      unterstützt (0x2005, doppelt gemessen). Es gibt kein Format — die Frage
+      entfällt.**
 - [x] **Startet `0x01` auf `0x2005` den Access Point?** **JA** — mit
       vorhandenem Classic-Bond akzeptiert (24.08. 21:29, „accepted“), AP
       broadcastet nach ~80 s. Beantwortet 24.08.
@@ -74,7 +74,8 @@ oft mehr wert als die Frage.
 - [ ] Was tun `0x2082`–`0x2087`? Sechs Characteristics, die die Hersteller-App
       **nicht kennt** — nur an der Kamera selbst zu erschließen.
 - [ ] Was sind die Properties `D303`, `D406`, `D407`? Ebenfalls in der App
-      nicht auffindbar.
+      nicht auffindbar. **Rohwerte 26.08. gemessen:** D303=`01` (u8),
+      D406=`010000`, D407=`01000000` (u32=1) — Deutung weiterhin offen.
 - [x] Stimmt die CCCD-Ableitung (Value-Handle + 1)? **JA** — am 22.08. direkt
       am GATT-Baum der Kamera bestätigt: die vier Deskriptoren sitzen bei
       0x002c/0x003d/0x004c/0x0051, je +1 über dem Value-Handle (belegt in
@@ -115,6 +116,41 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (21:23–21:50: E5-Messblock Zoom/Props) — Multi-/Negativschritte bewiesen, 0x90CA existiert nicht, Brennweiten-Grenzen dekodiert
+Aufbau:     Drei Session-Käufe über stop-stream→BLE-weck→join→Measure→
+            restart (Skripte /tmp/e5_v*.sh auf dem Pi). Mehrere Neuanläufe:
+            erstes Skript startete ohne Weckzyklus (AP tot, Lehre bestätigt),
+            zweiter Weck scheiterte bei 2-s-Settle, Erfolge ab 12 s.
+Belegt:     - **0x90CA (GET_VENDOR_PROP_CODES): OPERATION_NOT_SUPPORTED**
+              (0x2005, doppelt bestätigt) — Kamera hat die Operation nicht.
+              Offene Frage „Datenformat" damit erledigt: es gibt keins.
+            - **Zoom-Multi-Schritt bewiesen:** `zoom(+10)` bewegte +3800
+              Einheiten in 1,5 s (ein Befehl ≠ ein Schritt); `zoom(-13)`
+              brachte exakt auf Baseline zurück → Negativrichtung bewiesen.
+            - **Schrittparameter OBERGRENZE:** `zoom(-300)` →
+              INVALID_PARAMETER 0x201D (abgelehnt, keine Bewegung). Grenze
+              irgendwo zwischen 14 und 299 pro Befehl, ungemessen.
+            - **Anschlag-Indiz:** Bei focal=3500 tat `zoom(+3)` NICHTS,
+              während `zoom(+10)` danach sofort bewegte — Regime-Grenze
+              (Verdacht Optical/Digital-Übergang), unbestätigt.
+            - **Brennweiten-Grenzen dekodiert:** D0E3 (min)=0x00000960=
+              2400, D0E4 (max)=0x000493E0=300000 — Zenti-mm, also exakt
+              Spezifikation 24–3000 mm äq. Positionswerte von 0x5008
+              (3500/7300) passen NICHT direkt auf diese Skala — Einheiten-
+              frage offen (Digitalbereich? andere Einheit?). Vorherige
+              Kalibrierungskurve unberührt (die nutzt EXIF-Echt-mm).
+            - **Rohwerte unbekannter Properties:** D303=`01` (u8),
+              D406=`01 0000`, D407=`01 000000` (u32=1). Deutung offen.
+            - Betriebs-Lehren: BLE-Weck braucht ≥12 s Settle nach sauberem
+              Session-Stopp (2 s scheiterte mit „device disconnected");
+              Schnellfolge von Weckzyklen (--hold-300-Kette) kann Creds-
+              Lieferung aussetzen lassen (ein ABBRUCH nach zwei Erfolgen).
+Folge:      Kamera verbleibt auf focal=3500 (bewusst — Langbrennweite
+              ist fürs Stern-Tracking kein Hindernis, Blobs werden größer).
+              Zoom-Anschlag/Digitalgrenze bleibt nachzu messen, wenn Zeit;
+              Einheitendiagnose von 0x5008 ebenfalls offen (Notiz A9 des
+              Plans ergänzt).
 
 ### 26.08.2026 (20:40: Abendsonde — Dämmerung sättigt den LiveView komplett) — Autopilot für die Nachtvalidierung läuft
 Aufbau:     Frame-Sonde gegen den laufenden Stream (System-python3, cv2),
