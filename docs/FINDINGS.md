@@ -23,16 +23,16 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Lesende HW-Validierung der Belichtungs-API durch** — alle typisierten Getter an der echten Kamera gemessen; 0x9522-Preview-Matrix vermessen; **Write-Sequenz wartet nur noch auf OK** |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **typisierte Belichtungs-Getter an HW validiert** (172 Tests) |
+| **Phase** | **Write-Kampagne durch** — ISO/Drive/EV an der HW schreibbar und gemessen (EV nur mit ⅓-Stop-Leiterwert, sonst 0x2007); Programm/Verschluss/Blende ACCESS_DENIED, exakt wie ihre Descs (read-only) |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View-Frames über PTP/IP 15740** · **Dauer-Stream systemd im Fernmodus: 15 fps** · **Capture+Download an HW validiert** · **Belichtungs-Reader UND Writer an HW validiert** (172 Tests) |
 | **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
 | **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | **Property-Writes (SetDevicePropValue) nie an der HW gelaufen** — Formate jetzt aber komplett messbasiert (s. 26.08. unten); brauchen ausdrückliches OK (Playbook §7). Danach: Zoom `0x9016`-Wirkung messen. |
-| **Nächster Schritt** | Nach OK: stille Write-Sequenz (`set program M` → `set iso 800` → `set shutter 1/30` → zurück auf `program auto`) mit `props --dump` vor/nach jedem Write als Gegenprobe; `props --diff` auswerten. |
+| **Offenes Gate** | **Desc-Access dial-abhängig?** — Verschluss/Blende/Programm sind laut Desc read-only (gemessen: 0x200F); ob der Dial auf M die Flags dreht, ist ungemessen (braucht Thomas am Drehrad). Danach: Zoom `0x9016`-Wirkung messen. |
+| **Nächster Schritt** | (a) Thomas: Dial auf M stellen → `props --dump` + Write-Versuch Verschluss/Blende (desc-diff entscheidet). (b) `0x9016`-Zoom-Wirkung messen. (c) CV-Pipeline auf den Stream setzen. |
 | **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-26 (Reader + 0x9522 an HW gemessen, Write-Gate offen) |
+| **Stand vom** | 2026-08-26 (Write-Kampagne durch: ISO/Drive/EV schreibbar, Rest read-only wie Desc) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -111,6 +111,40 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 26.08.2026 (Write-Kampagne) — Property-Writes an der HW: ISO/Drive/EV gehen, Rest ist read-only (steht so im Desc)
+Aufbau:     Drei Weckzyklen, je EIN Python-Prozess/EINE Verbindung
+            (`/tmp/hw_writes.py`, `hw_writes2.py`, `hw_ev.py` auf dem Pi).
+            OK von Thomas für die stille Sequenz mit Restore lag vor.
+Belegt:     - **ISO (0x500F) schreiben funktioniert** — 2× gemessen
+              (800 → Readback 800, Wire `2003` = 0x0320 LE; Restore auf 0
+              = Auto klappt). ISO bleibt über Verbindungen hinweg stehen.
+            - **Drive (0x5013) schreiben funktioniert** — burst(2) und
+              zurück single(1); genau das macht die Hersteller-App in ihrer
+              Startsequenz (referenz.md).
+            - **EV (0x5010) schreiben funktioniert nur mit Leiterwert:**
+              +0.666 → OK (Readback 0.666), +1.0 → OK, **+0.7 (700) →
+              INCOMPLETE_TRANSFER 0x2007, reproduzierbar.** Die Kamera
+              quittiert Nicht-Leiterwerte also NICHT mit INVALID_PARAMETER,
+              sondern 0x2007. Leiter = ⅓-Stop-Raster (steps·1000/3:
+              333, 666, 1000, …). `set_exposure_bias()` snapped jetzt
+              darauf (mit symmetrischem Floor: −2 Steps → −666).
+            - **Programm (0x500E), Verschluss (0xD100), Blende (0x5007)
+              → ACCESS_DENIED 0x200F.** Kein Rätsel: **die PropertyDescs
+              derselben Kamera deklarieren genau diese als read-only**
+              (bundle props.json: access-Feld) — ISO/EV/Drive als
+              read/write. Das Deny-Muster war in der eigenen Messung vom
+              Vortag ablesbar.
+            - FocusMode (0x500A) nicht beschrieben (Desc: read-only).
+Folge:      **Write-Gate geschlossen:** Alle beschreibbaren Props sind
+              gemessen und funktionieren; die read-only-Antwort der Kamera
+              ist konsistent mit ihren Descs. Offene Teilfrage: ob die
+              Desc-Access-Flags dial-abhängig sind (Dial auf M → Blende/
+              Verschluss vielleicht read/write?). Braucht Thomas am Drehrad.
+Fallen:     - ISO-Write überlebte einen Skript-Crash (falscher Methodenname
+              `set_ev` → AttributeError NACH dem ersten Write) — Restore-
+              Schritte IMMER am Ende laufen lassen, auch nach Fehlern;
+              der zweite Lauf fand `before.iso = 800` vor.
 
 ### 26.08.2026 (Reader-Validierung + 0x9522) — Belichtungs-Getter an der HW: alle Formate bestätigt, 0x9522 vermessen
 Aufbau:     Drei Weckzyklen (AP schloss nach jedem Disconnect); pro Zyklus

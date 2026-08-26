@@ -103,7 +103,7 @@ def test_set_writes_exposure_settings(
     assert camera_server.properties[NikonProperty.SHUTTER_SPEED] == _s.pack("<I", (1 << 16) | 30)
     assert camera_server.properties[StandardProperty.ISO] == _s.pack("<H", 800)
     assert camera_server.properties[StandardProperty.F_NUMBER] == _s.pack("<H", 560)
-    assert camera_server.properties[StandardProperty.EXPOSURE_BIAS] == _s.pack("<h", -700)
+    assert camera_server.properties[StandardProperty.EXPOSURE_BIAS] == _s.pack("<h", -666)
     assert camera_server.properties[StandardProperty.EXPOSURE_PROGRAM] == _s.pack(
         "<H", int(ExposureProgram.MANUAL)
     )

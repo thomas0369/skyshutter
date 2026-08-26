@@ -117,3 +117,10 @@ def test_write_property_value(camera_address: tuple[str, int]) -> None:
         assert camera.iso() == 100
         camera.set_iso(800)
         assert camera.iso() == 800
+        # EV snaps to the measured 1/3-stop grid: 0.7 must travel as 666
+        # millistops -- off-grid values earn INCOMPLETE_TRANSFER at HW.
+        camera.set_exposure_bias(0.7)
+        assert camera.exposure_bias() == 0.666
+        camera.set_exposure_bias(1.0)
+        assert camera.exposure_bias() == 1.0
+        camera.set_exposure_bias(0.0)

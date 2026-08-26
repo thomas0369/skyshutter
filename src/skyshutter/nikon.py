@@ -506,7 +506,19 @@ class NikonCamera:
         return struct.unpack("<h", raw[:2])[0] / 1000.0 if len(raw) >= 2 else 0.0
 
     def set_exposure_bias(self, stops: float) -> None:
-        self.set_property(StandardProperty.EXPOSURE_BIAS, struct.pack("<h", round(stops * 1000)))
+        """Set exposure compensation; snaps to the camera's 1/3-stop grid.
+
+        Measured 26.08. at HW: the camera accepts only ladder values
+        (millistops = steps * 1000 // 3 -- 333, 666, 1000, 1333, ...) and
+        answers off-grid values with INCOMPLETE_TRANSFER (0x2007), not
+        INVALID_PARAMETER. Snapping to the nearest step is what the dial
+        would do anyway; the getter keeps reporting exact millistops.
+        """
+        steps = round(stops * 3)
+        sign = -1 if steps < 0 else 1
+        # Symmetric floor: -2 steps travel as -666, not Python's -667.
+        millistops = sign * (abs(steps) * 1000 // 3)
+        self.set_property(StandardProperty.EXPOSURE_BIAS, struct.pack("<h", millistops))
 
     def exposure_program(self) -> ExposureProgram:
         return ExposureProgram(self.get_property_u16(StandardProperty.EXPOSURE_PROGRAM))
