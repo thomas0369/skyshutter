@@ -117,6 +117,34 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (00:36–01:10: Nach dem Kamera-Neustat) — Session lebt, aber ZERO Frames zum Konsumenten; BLE-Wake kollabiert bei Schnellfolge
+Aufbau:     Nach Thomass Kamera-Neustart: Ein Weckzyklus erfolgreich
+            (00:37 join Versuch 13, battery 100 %), Stream „live view on".
+            Danach 8+ unabhängige Konsumenten-Versuche gegen :8080
+            (star_tracker synchron + gestückelt 6×18 s, Byte-Pulls,
+            Debug-Doppel-Anlauf) über 35 min.
+Belegt:     - **Session lebt, Frames nicht:** Keepalive-Polls kommen im
+              25-s-Takt durch (Journal bis 01:00), Port hört — aber JEDE
+              Konsumenten-Verbindung erhielt 0 Bytes/0 Frames. Zweimal
+              endete die PTP-Frame-Versorgung mit „network error: timed
+              out" (00:42:31). Verdacht: StartLiveView antwortet OK nach
+              dem Neustart, der LV-Bildstrom läuft aber NICHT an (Kamera
+              evtl. in Playback-/Unruhe-Zustand). Frame-Pull bleibt stumm,
+              ohne Fehler zu werfen.
+            - **BLE-Wake-Kollaps bei Schnellfolge:** nach ~6 Zyklen in
+              25 min lieferte die Kamera keine Creds mehr (zweimal
+              hintereinander ABBRUCH im Debug-Skript, wiederholt
+              „Keine frischen Zugangsdaten" im Wrapper-Journal). Tagsüber
+              waren Einzelschnellfolgen unkritisch; nächtliche Dauerfolge
+              scheint ein anderes Regime. (Frage für tags: gibt es eine
+              Pause-Untergrenze zwischen Weckzyklen?)
+Folge:      E1-Nachtvalidierung heute NICHT geschafft — blockiert durch
+              Kamera-Zustand, nicht durch Code (bei Tage liefen 59 kB-
+              Frames stundenlang). Nächste Runde tagsüber: (1) Kamera am
+              Gerät prüfen/LV manuell anstoßen, (2) Debug-Stream-Lauf
+              (/tmp/dbgstream.sh auf dem Pi) mit Creds-Erfolg wiederholen
+              — die -vv-Ausgabe zeigt genau, wo der Bildstrom hängt.
+
 ### 26.08.2026 (23:32–23:41: BLE-Wake tot) — Kamera sendet nicht mehr; E1 wartet auf physischen Check
 Aufbau:     Wrapper-Loop im Minutentakt-Retry (Journal), remote-start-
             Log gelesen, bluetoothctl verifiziert.
