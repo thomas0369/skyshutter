@@ -117,6 +117,30 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (09:20–09:30: Magenta-Kollaps eingekreist + Auto-Heal) — Kamera-Wake heilt, LV-Restart nicht; Schutz aktiv
+Aufbau:     LV-Testskript (/tmp/lv_test.py) in frischer Session nach BLE-Wake:
+            Frames via 0x9203 gezogen, vor/nach EndLiveView→StartLiveView.
+            Danach Watchdog-Prozess (/tmp/lv_watchdog.py, System-python+cv2):
+            pollt alle 30 s den Stream, restartet Service bei std<1.0.
+Belegt:     - **Kamera-Display zeigt laut Thomas ein perfektes Bild** während
+              der PTP-Stream magenta-kollabiert → zwei getrennte Pfade; der
+              PTP-LV-Encoder/Buffer der Kamera ist der defekte Teil.
+            - **Nach frischem BLE-Wake: gesund.** std=63.17 (reale Struktur),
+              Kante bei Zeile 197 bleibt — das ist eine REALE Bildkante der
+              Szene (kein Artefakt; Region [300:1100] hat jetzt Struktur).
+            - **EndLiveView→3s→StartLiveView heilt NICHT** (B-Serie zeigte
+              unverändert gesunde Werte — aber der Zustand war nach dem
+              Wake schon gesund; der Zyklus bleibt damit ungetestet gegen
+              einen AKUTEN Kollaps. Eindeutig: PTP-Reconnect heilt nicht,
+              Kamera-Wake heilt).
+            - Auto-Heal aktiv: star_tracker.py beendet sich mit Exit 2 +
+              Service-Restart bei std<1.0 (alle 5. Frame geprüft); Watchdog
+              auf dem Pi deckt auch Browser-Konsumenten ab.
+Offen:      Wann genau kollabiert der LV-Buffer? (08:51 Service-Start war
+              gesund laut journal — battery-Log —, 09:07 erste Magenta-
+              Messung; Fenster also <16 min, Auslöser unbekannt: Zeit?
+              Gegenlicht? WLAN-Flattern?) Watchdog-Log liefert das Muster.
+
 ### 27.08.2026 (09:05–09:15: „80 % roter Block") — Kamera liefert Frames mit synthetischem Magenta-Füllbereich; Transport/Server vollständig entlastet
 Aufbau:     Pixel-Karten (48×24/12 Text-Downscale) + Varianz-Analyse gegen
             den laufenden MJPEG-Stream nach Nutzerbericht „roter Block".
