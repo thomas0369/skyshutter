@@ -13,19 +13,59 @@ Die Arbeitsweise steht in [playbook.md](playbook.md), der belegte Stand in
 | **0** Fernauslöser über BLE | Kamera löst aus | **hinfällig** — die Kamera hat die Kamerasteuerung über BLE abgeschaltet (Feature-Bit 11) |
 | **1** Ist es PTP? | Antwort auf dem Steuerkanal | **erreicht**, über USB statt WLAN |
 | **2** Fähigkeiten auslesen | Vendor-Opcodes in der Liste | **erreicht** — 38 Operationen, 20 Properties |
-| **3** Live View und Auslöser | ein Bild im Browser | **offen** — Opcodes vorhanden, Bild fehlt |
-| **4** Zoom, Belichtung, Fokus | Zoomfahrt per Kommando | **teilweise** — `0x9016` bekannt, ungetestet |
-| **5** BLE-Pfad | WLAN startet ohne die App | **erreicht** — `remote-start.py` fährt den AP hoch (CCCDs + `VALID_WAKE` + `0x2005`), an der Hardware belegt |
-| **3** Live View und Auslöser | ein Bild im Browser | **offen, letzte Meile** — AP steht; fehlt nur der zuverlässige AP-Beitritt (GL.iNet-Mango, WISP) + PTP/IP |
-| **6** Robustheit | vier Stunden Intervall ohne Handgriff | offen |
+| **3** Live View und Auslöser | ein Bild im Browser | **erreicht** — Stream 1552×1162, systemd-Dauerbetrieb, Capture+Download an HW validiert |
+| **4** Zoom, Belichtung, Fokus | Zoomfahrt per Kommando | **erreicht** — Zoom EXIF-bewiesen, ISO/EV/Drive schreibbar; Fokus read-only |
+| **5** BLE-Pfad | WLAN startet ohne die App | **erreicht** — `remote-start.py` fährt den AP hoch, an der Hardware belegt |
+| **6** Robustheit | vier Stunden Intervall ohne Handgriff | **teilweise** — systemd-Dienst selbstheilend (26 s + bluetoothd-Race + LV-Retry); Nacht-Dauertest ausstehend |
+| **M** AZ-GTi-Mount + Satelliten | ein verfolgter Pass | **Bewegung live bewiesen, Tracking offen** — Details unten |
+| **7** Astro-Features | — | teilweise (Intervall, Belichtung); Drift-Korrektur hängt an Phase M |
+| **8** MCP-Server | — | zurückgestellt |
 
 **Die Reihenfolge hat sich gedreht.** USB lieferte die Bestätigung für Phase 1/2;
-der WLAN-Zugang (Phase 5) ist der kritische Pfad und jetzt **geknackt** — die
-korrigierte BLE-Sequenz bringt die Kamera dazu, ihr WLAN zu öffnen (frühere
-„hängt an einem Byte"-Annahme war falsch: es fehlten die CCCD-Abos, und
-`0x2001=0x03` ist VALID_WAKE, kein Gate). Offen bleibt nur die letzte Meile:
-zuverlässig dem AP beitreten und das erste Bild ziehen — reine Timing-Frage
-(BLE-Stack-Drops, AP-Fenster). Belegte Sequenz: [REMOTE_SEQUENCE.md](REMOTE_SEQUENCE.md).
+der WLAN-Zugang (Phase 5) ist geknackt, Live View und Auslöser (Phase 3) laufen
+im Dauerbetrieb auf dem Raspberry-Rig. Seit 27.08.2026 wächst das Projekt über
+die Kamera hinaus: Der AZ-GTi-Mount ist über die Mango-Bridge erreichbar und
+wird von derselben Steuerung aus kommandiert (Phase M). Belegter Stand:
+[FINDINGS.md](FINDINGS.md).
+
+## Phase M — AZ-GTi-Mount & Satellitentracking
+
+**Ziel:** Der Mount folgt einem vorausberechnchten Objekt (Stern, Satellit),
+die Kamera bleibt dabei im Stream. Das verbindet alle vorherigen Phasen.
+
+**Erreicht (27./28.08.2026, belegt in FINDINGS):**
+
+- Mango hängt als STA im SynScan-AP → Pi erreicht den Mount (192.168.4.1:11880).
+- `mount.py`: komplette Motion-API — `:E` Position setzen (exakt), slew mit
+  sanftem Richtungswechsel (nach Stillstand!), Goto über `:S/:J` (±0,002°),
+  Stopp weich (`:K`, Rampe) und hart (`:L`, nur Notbremse), Breakstep, Schalter.
+- Erste physische Bewegung bewiesen; alle AZ-Features an der HW getestet
+  (außer `:H`, siehe playbook Abschnitt 7).
+- `satellite.py`: SGP4-Geometrie, celestrak-Fetch, Passliste — am Pi live
+  verifiziert (Demo-Koordinaten). `mount satellite --passes/--now/--track`,
+  alles hinter dem `--allow-motion`-Gate.
+
+**Der Bruch:** Die AZ-GTi-Firmware ignoriert `:I` — es gibt nur zwei feste
+Slew-Raten (2,07°/s slow, 1,57°/s fast). Ratenbasiertes Nachführen ist damit
+gestrichen. ISS-Pässe brauchen 0,2–1°/s: **Goto-Pulsing** (kleine `:S`-Offsets
+im Sekundentakt, ~1,77°/s Goto-Rate) ist der Weg, zuerst im Simulator.
+
+**Blocker:** Alt-Achse mechanisch fest (Höhenklemmung? Thomas prüft; ohne Alt
+kein zweichsiges Tracking). Kamera-Akku (Stream tot seit 27.08. ~20:50).
+Beobachterkoordinaten fehlen.
+
+**Upgrade-Pfad** (Recherche 28.08., falls Pulsing zu hakelig wird — Quellen:
+Hersteller-Specs, Händler, cloudynights; keine eigenen Messungen):
+
+| Option | Raten | Anbindung | Preis (Kopf) |
+|---|---|---|---|
+| AZ-GTi + Goto-Pulsing (Status quo) | Goto ~1,8–2,7°/s, Festraten 1,6/2,1°/s | unser UDP-Weg, offen | 0 € |
+| iOptron HAZ31/HAZ43 (Harmonic Alt-Az) | 6°/s, kein Getriebespiel | LX-Protokoll/ASCOM, Firmware-Log nennt „Satellite tracking control enabled" | ~2.000–3.500 € |
+| ZWO AM5/AM3 (Harmonic, Alt-Az-Modus) | 6°/s | ASIAIR-Ökosystem, eher geschlossen | ~2.000–3.000 € |
+| TTS-160 Panther (Track The Stars) | Riemen-ExactDrive, offizielle SkyTrack-Integration (ASCOM) für ISS | SkyTrack-Software | ab ~1.700 € (Lite), Pakete 4.000–6.500 € |
+
+Für LEO reicht die Physik der AZ-GTi prinzipiell (max. Winkelrate ISS ~1°/s <
+Goto-Rate); entscheidend ist, wie ruhig das Pulsing im Bildfeld ankommt.
 
 ## 1. Rollenverteilung
 
@@ -274,12 +314,18 @@ with Camera.discover() as cam:          # BLE-Wake, WLAN an, PTP/IP-Session
 Alles darunter — Handshake, Vendor-Opcodes, Reconnect nach WLAN-Abriss — ist
 Implementierungsdetail und für dich unsichtbar.
 
-## 8. Nächster Schritt, heute
+## 8. Nächster Schritt
 
-Genau ein Kommando entscheidet über die nächsten zwei Wochen:
+Drei Dinge blockieren nichts anderes, sondern nureinander nicht — jede kann
+parallel kommen:
 
-```bash
-skyshutter probe
-```
+1. **Thomas, physisch:** Höhenklemmung am Mount lösen (geriffelter Drehgriff
+   auf der Kippachse), Alt von Hand prüfen, Kamera-Akku laden.
+2. **Thomas, eine Zeile:** Beobachterkoordinaten (lat/lon, optional Höhe) —
+   ohne die bleibt jede Passliste Demo.
+3. **Ich:** Goto-Pulsing-Tracker im Simulator bauen (MountSim mit gemessener
+   Goto-Rate 1,77°/s + Auslauframpe), dann Alt-Feature-Parität, sobald die
+   Achse frei ist.
 
-Der Rest des Plans hängt an dessen Ausgabe.
+Danach: erster echter ISS-Pass mit
+`mount satellite --norad 25544 --lat … --lon … --track --allow-motion`.

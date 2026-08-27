@@ -23,16 +23,15 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Tracking-Kette end-to-end bewiesen (Stream→star_tracker→ZMQ→Mount-Loop, mock)** — Produktion fehlt nur Nacht-Parameter + FTDI/indi/Unpark |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **AP-Start + Join** · **Live-View 1552×1162 FULL, systemd selbstheilend (26 s + bluetoothd-Race + LV-Prohibit-Retry)** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Rauschfloor 0,06 px** · **ZMQ-Brücke zum AZ-GTi-Mount-Loop im Mock bewiesen (30/30 Frames)** (173 Tests) |
-| **Erreicht (alt)** | **AP-Start geknackt.** `remote-start.py` fährt den korrigierten Flow (CCCs + VALID_WAKE + Bond + `0x2005`=01) und die Kamera öffnet ihren WLAN-AP |
-| **Erreicht (neu)** | **Feld-Rig steht.** Raspberry (reComputer R2140, Debian 12, 4×A76/16 GB, Hailo) = Funk-Zentrale: WLAN+BLE an Bord (`wlan0`/`hci0`, beide aktiv, bleak-Scan ok). `remote-start.py` auf Linux portiert und auf dem Raspberry deployt (`~/projekte_hardware/skyshutter`, venv + bleak 3.0.2 + pycryptodome). Mango = reiner AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22 + 8080→8080). |
-| **Offenes Gate** | Alle Kern-Features bewiesen oder entschieden. Verworfen/negativ: 0x941E (wirkungslos oder Session-Kill), Event-Socket (schweigt — Polling via 0x941C ist der Weg). Rest: `0x9520/21` uninteressant bis auf Weiteres. **Nächster Block: CV-Pipeline auf den Stream.** |
-| **Nächster Schritt** | (a) **Nachtvalidierung CV** (jetzt ~22:30 ab Dunkelheit): `python3 tools/cv/star_tracker.py --duration 120 --out /tmp/stars.csv --zmq` an echten Sternen → min/max-area kalibrieren. WLAN-Tode (−71 dBm) überbrückt der Wrapper in ~60–90 s — Lücken tolerierbar. (b) Physisch: Pi-Antenne/Position relativ Kamera prüfen (Metall weg), Kamera-Akku am Display. (c) FTDI-Kabel anschließen + `ASTRO_BACKEND=indi` + Unpark (erst dann echte Bewegung). |
-| **Danach** | CV-Pipeline (astro-cv-tracker-Know-how + Hailo) auf den Stream setzen. |
-| **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) |
+| **Phase** | **Mount-Bewegung live bewiesen, Satellitenkette live (dry-run) — Tracking-Design-Wechsel nötig: die AZ-GTi ignoriert `:I`, es gibt nur zwei Festraten** |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **Live-View 1552×1162 FULL, systemd selbstheilend** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Rauschfloor 0,06 px** · **AZ-GTi: UDP-Client + komplette Motion-API an echter HW** (`:E` exakt, Goto ±0,002°, slew/Richtung/Stopp verifiziert) · **SGP4-Satellitengeometrie live** (celestrak-Fetch + Passliste am Pi) · 204 Tests grün |
+| **Erreicht (alt)** | **Feld-Rig steht.** Raspberry (reComputer R2140) = Funk-Zentrale, Mango = AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22). Mango hängt zusätzlich als STA im Mount-AP (SynScan) → Pi erreicht den AZ-GTi (192.168.4.1:11880) direkt. |
+| **Offenes Gate** | **Rate:** `:I` wirkt nicht — Track-Modi liefern fest 2,07°/s (slow) bzw. 1,57°/s (fast); `dps2period` damit wertlos. `satellite --track` braucht Goto-Pulsing (kleine `:S`-Offsets im Sekundentakt) statt Ratensteuerung. Dazu: **Alt-Achse mechanisch fest** (Höhenklemmung? — Thomas prüft; Encoder-Handtest lief leer), **Kamera-Akku leer** (Stream seit 27.08. ~20:50 tot). |
+| **Nächster Schritt** | (a) **Goto-Pulsing im Simulator designen + testen**, bevor `--track` wieder an echte HW darf. (b) Thomas: Höhenklemmung lösen → Encoder-Handtest (`:j2`-Monitor) → Alt-Feature-Parität. (c) Thomas: Beobachterkoordinaten liefern (Demo 50.11/8.68 nur Funktionsbeweis). (d) Kamera-Akku laden → Parallel-Beweis Stream+Mount. |
+| **Danach** | Erster echter ISS-Pass mit `mount satellite --norad 25544 … --track --allow-motion`. Ausstiegspfad bei zu hakeligem Pulsing: Upgrade-Pfad recherchiert (28.08., plan.md Phase M): Harmonic-Alt-Az (iOptron HAZ31/43, 6°/s, Firmware „Satellite tracking control enabled") oder TTS-160 Panther (SkyTrack-Integration, ab ~1.700 €). |
+| **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) · variable Slew-Raten am AZ-GTi (Firmware ignoriert `:I`, doppelt gemessen 27.08.) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-26 (Belichtungs-Properties vollständig kartiert; Astro-Stream+Auslöser stabil) |
+| **Stand vom** | 2026-08-28 (Mount-Motion + Satelliten-Dry-Run live; Festraten-Fund) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -50,6 +49,22 @@ oft mehr wert als die Frage.
 
 ### Offen
 
+- [ ] **Warum ist die Alt-Achse mechanisch fest?** Thomas' Handbefund 27.08.
+      („sehr fest"). Vermutung: Höhenklemmung überdreht. 60 s `:j2`-Handtest
+      lief ohne Count-Änderung — aber unklar, ob während des Laufs wirklich
+      gedreht wurde. Nach dem Lösen wiederholen; danach Alt-Feature-Parität.
+- [ ] **Was bedeutet Statuswort-Bit 3 (`101`)?** Toggled durch `:F1` (AZ:
+      100→101), Alt zeigt es ab Einschalten. Bewegung läuft damit normal —
+      die frühere „alt nicht initialisiert"-Lesart war eine Fehlinterpretation.
+      Zusammenhang mit der festen Alt-Achse: ungeklärt.
+- [ ] **Warum timed `:L1` im fast-CCW-Modus (`:G31`) aus** und antwortet der
+      Mount danach mit Müll (`AT`)? Recovery über `stop_all` nach ~2 s klappt.
+      Beobachtet 27.08., nicht systematisch untersucht.
+- [ ] **Wirkt `:H` (Goto-Increment) auf die Goto-Geschwindigkeit?** Absichtlich
+      NICHT getestet: pysynscan stuft `:H` selbst als „NOT IN USE, HAVE TO BE
+      TESTED" ein, Wiederherstellung nur stromlos. Asymmetrisches Risiko.
+- [ ] **Welche Beobachterkoordinaten?** Passlisten liefen bisher auf
+      Frankfurt-Demo (50.11/8.68). Für echte Pässe: lat/lon/elev von Thomas.
 - [ ] **Welches exakte Datenformat liefert `0x90CA` (GET_VENDOR_PROP_CODES)?**
       ~~Verifikation ausstehend.~~ **ERLEDIGT 26.08.: Die Operation wird nicht
       unterstützt (0x2005, doppelt gemessen). Es gibt kein Format — die Frage
@@ -86,6 +101,11 @@ oft mehr wert als die Frage.
 
 ### Beantwortet
 
+- [x] **Lässt sich die Slew-Rate über `:I` (Schrittperiode) steuern?** **NEIN** —
+      an der AZ-GTi doppelt gemessen 27.08.: Perioden 1/2/5/10 liefern im
+      Slow-Track konstant 2,07°/s, im Fast-Track konstant 1,57°/s. Das
+      `dps2period`-Modell (Timer 14.400 Hz) gilt für diese Firmware nicht.
+      Messung unten, 27.08. spät.
 - [x] **Welche Operationen unterstützt die Kamera?** 38 Stück, am 23.08.2026
       über USB ausgelesen. Vollständig in [referenz.md](referenz.md).
 - [x] **Gibt es Live View?** Ja — `9201`, `9202`, `9203` stehen in der Liste.

@@ -125,11 +125,29 @@ An der Kamera hängt echtes Gerät mit echten Bildern drauf. Deshalb, ausnahmslo
 * **Vor jeder Schreib-Runde**: Speicherkarte leer oder gesichert, Akku voll.
 * Kein Dauerlauf ohne Abbruchbedingung. Live View heizt die Kamera.
 
+**Mount (AZ-GTi), gleiche Strenge** — ergänzt 28.08. nach den Live-Tests:
+
+* **Jegliche Bewegung nur mit `allow_motion=True`** (CLI: `--allow-motion`).
+  Lesende Befehle (`:f/:j/:a/:s/:V`) laufen frei — durchs Test-Gate leckt nur
+  die Kalibrierung, nie ein `:G/:I/:J/:K/:L/:S`.
+* **Vor jedem Moduswechsel (`:G`, `:I`, Start) Stillstand erzwingen**: `:K` ist
+  eine Auslauframpe, das Running-Bit bleibt 1–2 s nach dem Stopp gesetzt. Ein
+  Richtungswechsel bei laufender Achse wird von der Firmware kommentarlos
+  verschluckt (gemessen 27.08.). Pollen bis `running=False`, dann erst weiterschalten.
+* **`:L` (Hard-Stop) nur als Notbremse** — im fast-CCW-Zustand (`:G31`) danach
+  Timeout + Müll-Antworten beobachtet; Verbindung nach `:L` immer verifizieren.
+* **`:H` (Goto-Increment) gar nicht senden** — pysynscan führt es selbst als
+  „NOT IN USE, HAVE TO BE TESTED", Wiederherstellung nur stromlos.
+* **Alt-Achse nicht bewegen**, solange sie mechanisch fest ist (Befund 27.08.)
+  — Motorbefehle gegen blockierte Achse grillen Getriebe oder Motor.
+* `:M` (Breakstep) und `:O` (Schalter) sind als unbedenklich gemessen; `:O`
+  hat am AZ-GTi keine sichtbare Wirkung (kein Zubehörport belegt).
+
 ## 8. Was ich zwischen den Runden ohne Hardware baue
 
 Damit eine Session nie leerläuft, während Thomas nicht am Gerät ist.
 
-**Erledigt** (Stand 23.08.2026):
+**Erledigt** (Stand 28.08.2026):
 
 - **BLE-Werkzeuge** — `ble-probe.py`, `classic-pair.py`, `ble-proxy.py`,
   `ble-camera-sim.py`. Übersicht in [../tools/README.md](../tools/README.md).
@@ -138,19 +156,29 @@ Damit eine Session nie leerläuft, während Thomas nicht am Gerät ist.
 - **Analyse der Hersteller-App** — Opcodes, Frame-Format, WLAN-Auslöser,
   Verschlüsselung. Ergebnisse in [referenz.md](referenz.md).
 - **Kopplungsablauf** — `pair.sh`, portabel, mit Ansagen.
+- **Mount-Client + Satellitengeometrie** — `mount.py` (Motion-API, an HW
+  getestet), `satellite.py` (SGP4, celestrak, Passliste, live am Pi),
+  CLI `mount slew/satellite`. 204 Tests. Details: FINDINGS 27./28.08.
 
 **Offen**, nach Nutzen sortiert:
 
-1. **`skyshutter bundle`** — sammelt Probe, DeviceInfo roh und geparst, ein
+1. **Goto-Pulsing-Tracker** — das Design, das `satellite --track` nach dem
+   Festraten-Fund überhaupt erst möglich macht. MountSim braucht dafür die
+   gemessene Goto-Rate (1,77°/s) und die `:K`-Auslauframpe.
+2. **Alt-Freigabe** — Klemmung lösen (Thomas), `:j2`-Handtest wiederholen,
+   dann dieselbe Feature-Parität wie für AZ.
+3. **TLE-Cache** — celestrak-Fetch mit Datumsschlüssel cachen, sonst geht je
+   `satellite`-Aufruf ein HTTP-Request über die Mango-Kette raus.
+4. **`skyshutter bundle`** — sammelt Probe, DeviceInfo roh und geparst, ein
    Live-View-Frame und Logs in ein Verzeichnis. Ein Kommando statt sechs.
-2. **`skyshutter props --dump/--diff`** — das Werkzeug für Abschnitt 6.
-3. **Entschlüsselung der WLAN-Zugangsdaten** — Blowfish-CBC, Schlüssel aus
+5. **`skyshutter props --dump/--diff`** — das Werkzeug für Abschnitt 6.
+6. **Entschlüsselung der WLAN-Zugangsdaten** — Blowfish-CBC, Schlüssel aus
    Werten ableitbar, die über BLE sichtbar sind. Der aufwendigste Posten, aber
    der einzige Weg zu einem Passwort, das bei jeder Verbindung wechselt.
-4. **`skyshutter pcap datei.pcap`** — PTP/IP aus einem Mitschnitt zerlegen.
+7. **`skyshutter pcap datei.pcap`** — PTP/IP aus einem Mitschnitt zerlegen.
    Nachrangig geworden: Ein Mitschnitt des WLAN-Verkehrs setzt voraus, dass die
    Kamera ihr WLAN öffnet — genau das ist das offene Gate.
-5. **Reconnect-Logik** gegen einen Simulator, der Verbindungsabbrüche simuliert.
+8. **Reconnect-Logik** gegen einen Simulator, der Verbindungsabbrüche simuliert.
 
 ## 9. Repo-Konventionen
 

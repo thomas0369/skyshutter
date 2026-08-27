@@ -27,12 +27,13 @@ JPEGs. Die Werkzeuge in `tools/` haben eigene Voraussetzungen — siehe
 | | |
 |---|---|
 | **PTP** | **bestätigt** — 38 Operationen und 20 Properties an der Hardware ausgelesen |
-| **Live View** | **vorhanden** — `9201`, `9202`, `9203` stehen in `operations_supported` |
-| **Zoom** | Operation bekannt (`9016`), an der Hardware noch nicht ausgelöst |
+| **Live View** | **läuft** — 1552×1162, systemd-Dauerbetrieb (selbstheilend), Capture+Download validiert |
+| **Zoom** | **steuerbar** — `0x9016`, EXIF-bewiesen kalibriert; ISO/EV/Drive schreibbar |
 | **Kopplung** | **läuft reproduzierbar** — 40 Sekunden vom Funk-Reset bis zum Bond |
 | **Zugangsdaten** | **geknackt** — SSID und Passwort per `skyshutter wifi`; das Passwort **rotiert pro Session** und wird frisch entschlüsselt |
 | **WLAN-AP** | **bestätigt** — `remote-start.py` fährt den Access Point hoch (korrigierte BLE-Sequenz: CCCDs + `VALID_WAKE` + `0x2005`), von der Hardware belegt |
-| **Live View** | **letzte Meile** — Beitritt zum Kamera-AP über den GL.iNet-Mango (WISP) + PTP/IP; hängt nur noch an BLE-/AP-Timing, kein offenes Wissen |
+| **AZ-GTi-Mount** | **bewegt** — komplette Motion-API an der Hardware getestet (Goto ±0,002°); Slew-Raten sind firmwareseitig fest (1,57/2,07°/s), daher Tracking über Goto-Pulsing im Bau |
+| **Satelliten** | **Passliste live** — SGP4 + celestrak auf dem Pi verifiziert; `--track` wartet auf Pulsing-Design + Alt-Freigabe |
 
 Alles Gemessene steht in [docs/referenz.md](docs/referenz.md), der Weg dorthin
 im [Messprotokoll](docs/FINDINGS.md); die belegte End-to-End-Startsequenz in
@@ -40,9 +41,11 @@ im [Messprotokoll](docs/FINDINGS.md); die belegte End-to-End-Startsequenz in
 
 **Was heute schon geht:** über USB die Kamera abfragen, Fähigkeiten auslesen,
 Bilder holen; die (rotierenden) WLAN-Zugangsdaten aus einer Kopplung
-entschlüsseln; **die Kamera per BLE dazu bringen, ihr WLAN zu öffnen**.
-**Was noch fehlt:** der zuverlässige AP-Beitritt + das erste Livebild über
-WLAN — reine Timing-Sache (siehe FINDINGS, „Mango-Join fast fertig").
+entschlüsseln; **die Kamera per BLE dazu bringen, ihr WLAN zu öffnen**; Live
+View im Dauerbetrieb streamen und auslösen; den AZ-GTi-Mount über WLAN
+kommandieren und Satellitenpässe berechnen.
+**Was noch fehlt:** das ruckfreie Nachführen von Satelliten (Goto-Pulsing,
+Design steht) und die Alt-Achse (mechanisch fest, vermutlich Klemmung).
 
 ---
 
@@ -98,6 +101,9 @@ beschrieben, samt der Fallstricke, die dabei aufgetreten sind.
 | `skyshutter raw 0x9203 -o frame.bin` | beliebige Operation absetzen |
 | `skyshutter wifi pairing.json` | SSID und Passwort aus der Kopplung entschlüsseln |
 | `skyshutter btsnoop datei.log` | Bluetooth-Mitschnitt auswerten |
+| `skyshutter mount status` / `watch` / `stop` | AZ-GTi-Mount lesen und stilllegen |
+| `skyshutter mount slew --az-dps 0.5 --allow-motion` | Mount drehen (Gate: ohne Flag kein Byte) |
+| `skyshutter mount satellite --norad 25544 --lat 50.1 --lon 8.7 --passes` | ISS-Pässe der nächsten 12 h; `--now` aktuelle Position, `--track --allow-motion` verfolgt (im Bau) |
 
 Global: `--host`, `--port`, `--guid`, `--name`, `--timeout`, `-v`.
 
