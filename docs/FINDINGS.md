@@ -117,6 +117,23 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (21:15: `skyshutter mount` am echten Mount) — CLI read-only grün, Gate verweigert korrekt
+Aufbau:     Pi → end0 → Mango (apcli0) → Mount-AP, UDP 11880. Erster
+            Einsatz des neuen Moduls src/skyshutter/mount.py.
+Belegt:     - `.venv/bin/skyshutter mount status`: initialized=True,
+              version 0xC53603, steps/rev **2.073.600** (0x1FA400 —
+              Korrektur: früherer Handwert 2.073.088 in FINDINGS war ein
+              Rechenfehler), timer 14.400 Hz, az=alt=0 counts,
+              Wörter 100/101, beide stopped/tracking.
+            - `mount stop` OHNE --allow-motion: verweigert mit rc=1 und
+              Hinweis — Gate wirkt am echten Gerät.
+Offen:      - **alt meldet init=False** (Wort „101", drittes Bit gesetzt),
+              obwohl :F3 initialized=True sagt. Bit-Lesart aus pysynscan
+              (dessen Docstring sich selbst widerspricht) — ob Achse 2
+              eine eigene Init-Sequenz (:F2?) braucht, ist ungeklärt und
+              fürs Guiding zu klären, bevor Bewegungsbefehle fließen.
+            - Bewegungsbefehle weiter ungetestet (Regel: nur nach OK).
+
 ### 27.08.2026 (20:40–21:00: Mango als Mount-Brücke — Kette Pi→Mango→Mount steht) — ARP-Falle des SynScan-AP entschärft
 Topologie:  Thomas' Idee statt Station Mode / Zweitstick: Der Mango
             (GL-MT300N-V2) verbindet sich per WLAN-Client (STA) mit dem
@@ -168,7 +185,7 @@ Belegt:     - Mount-AP: SSID „SynScan", OFFEN (kein PSK), DHCP vergibt
             - 24-Bit-Werte werden in 2-Zeichen-Gruppen gedreht übertragen
               („563412" statt „123456").
             - Gemessen (beide Achsen identisch): Version e=0336C5,
-              Steps/Rev a=0x1FA400 (2.073.088), TimerFreq s=14.400 Hz,
+              Steps/Rev a=0x1FA400 (2.073.600), TimerFreq s=14.400 Hz,
               Highspeed-Schwelle j-Offset 0x800000, Status f1/f2=0x100/0x101
               (Achsen stehend), :F3 → `=` (initialisiert).
             - Befehlskarte (Referenz pysynscan motors.py, Verifikation —
