@@ -647,24 +647,62 @@ def cmd_stream(args: argparse.Namespace) -> int:
     buffer = FrameBuffer()
     server = serve(buffer, host=args.bind, port=args.http_port)
     print(f"live view on http://{args.bind}:{args.http_port}/ (ctrl-c to stop)")
+
+    consecutive_failures = 0
+    max_failures = 5
+
     try:
-        with NikonCamera.open(
-            _resolve_host(args),
-            port=args.port,
-            guid=config.client_guid(args.guid),
-            friendly_name=config.client_name(args.name),
-            timeout=args.timeout,
-        ) as camera:
-            battery = camera.battery_level()
-            log.info(
-                "battery: %s", f"{battery} %" if battery is not None else "unavailable (no 0x5001)"
-            )
-            for frame in camera.stream_live_view(
-                fps=args.fps,
-                remote_mode=getattr(args, "remote", False),
-                keepalive_secs=getattr(args, "keepalive_secs", 0.0),
-            ):
-                buffer.publish(frame)
+        while consecutive_failures < max_failures:
+            try:
+                with NikonCamera.open(
+                    _resolve_host(args),
+                    port=args.port,
+                    guid=config.client_guid(args.guid),
+                    friendly_name=config.client_name(args.name),
+                    timeout=args.timeout,
+                ) as camera:
+                    # Erfolgreiche Verbindung: Reset der Failure-Count
+                    consecutive_failures = 0
+                    battery = camera.battery_level()
+                    log.info(
+                        "battery: %s",
+                        f"{battery} %" if battery is not None else "unavailable (no 0x5001)",
+                    )
+                    for frame in camera.stream_live_view(
+                        fps=args.fps,
+                        remote_mode=getattr(args, "remote", False),
+                        keepalive_secs=getattr(args, "keepalive_secs", 0.0),
+                    ):
+                        buffer.publish(frame)
+
+            except (ConnectionError, TimeoutError, OSError) as e:
+                # Dazu gehoeren ConnectionRefused, NoRouteToHost, Timeout
+                consecutive_failures += 1
+                log.warning(
+                    "network error in stream loop (attempt %d/%d): %s",
+                    consecutive_failures,
+                    max_failures,
+                    e,
+                )
+                if consecutive_failures < max_failures:
+                    time.sleep(2.0 * consecutive_failures)
+
+            except Exception as e:
+                # Andere unerwartete Fehler (z.B. PTP-Protokollfehler) fangen wir ebenfalls auf
+                from .ptp import PtpError
+
+                if isinstance(e, PtpError):
+                    consecutive_failures += 1
+                    log.warning("ptp error in stream loop: %s", e)
+                    time.sleep(2.0)
+                else:
+                    raise
+
+        log.error(
+            "too many consecutive failures (%d). handing back to wrapper for BLE wake.",
+            max_failures,
+        )
+
     except KeyboardInterrupt:
         print()
     finally:

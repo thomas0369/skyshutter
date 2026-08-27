@@ -81,6 +81,9 @@ while true; do
         fi
     else
         echo "Keine frischen Zugangsdaten in $CREDS_FILE (BLE Handshake fehlgeschlagen?)."
+        echo "Entstoere Bluetooth-Stack (BlueZ) nach fehlgeschlagenem Handshake..."
+        sudo -n systemctl restart bluetooth || systemctl restart bluetooth
+        sleep 3
     fi
 
     # Aufraeumen: Toete den BLE-Hold-Prozess, falls er noch laeuft
