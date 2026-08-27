@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import btsnoop, config, discovery, lssec
-from .mount import MotionDeniedError, SynscanClient, SynscanError
+from .mount import AXIS_ALT, AXIS_AZ, MotionDeniedError, SynscanClient, SynscanError
 from .nikon import NikonCamera, NikonOperation
 from .ptp import AccessCapability, DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import DEFAULT_PORT, PtpIpConnection, PtpIpError
@@ -217,6 +217,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="explicit go — without it the command refuses to move anything",
     )
     mstop.add_argument("--hard", action="store_true", help="instant stop (:L) instead of :K")
+
+    mslew = msub.add_parser("slew", help="move both axes at constant speeds (deg/s)")
+    mslew.add_argument("--az-dps", type=float, default=0.0, help="azimuth deg/s (negative = CCW)")
+    mslew.add_argument("--alt-dps", type=float, default=0.0, help="altitude deg/s (negative = CCW)")
+    mslew.add_argument("--allow-motion", action="store_true", help="explicit go")
+
+    msat = msub.add_parser("satellite", help="SGP4 satellite pass prediction and tracking")
+    src = msat.add_mutually_exclusive_group(required=True)
+    src.add_argument("--tle", help="path to a TLE file (two or three lines)")
+    src.add_argument("--norad", type=_int, help="fetch current TLE from celestrak by NORAD id")
+    msat.add_argument("--lat", type=float, required=True, help="observer latitude, degrees north")
+    msat.add_argument("--lon", type=float, required=True, help="observer longitude, degrees east")
+    msat.add_argument("--elev", type=float, default=0.0, help="observer elevation in metres")
+    msat.add_argument("--passes", action="store_true", help="list visible passes (next 12 h)")
+    msat.add_argument("--now", action="store_true", help="print current az/alt instead of passes")
+    msat.add_argument(
+        "--track",
+        action="store_true",
+        help="actually drive the mount (default is dry-run printout)",
+    )
+    msat.add_argument("--lead", type=float, default=30.0, help="seconds to slew before acquisition")
+    msat.add_argument("--allow-motion", action="store_true", help="explicit go for --track")
 
     return parser
 
@@ -874,6 +896,27 @@ def cmd_mount(args: argparse.Namespace) -> int:
         print(f"stop sent to both axes ({'hard :L' if args.hard else 'decelerate :K'})")
         return 0
 
+    if args.mount_command == "slew":
+        if not args.allow_motion:
+            print(
+                "refusing to move: pass --allow-motion as your explicit go",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            client.slew_both(args.az_dps, args.alt_dps)
+        except SynscanError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"slewing az={args.az_dps:+.3f} alt={args.alt_dps:+.3f} deg/s "
+            "(stop with: mount stop --allow-motion)"
+        )
+        return 0
+
+    if args.mount_command == "satellite":
+        return _cmd_mount_satellite(args, client)
+
     if args.mount_command == "watch":
         print(f"polling {client.host}:{client.port} every {args.interval}s — Ctrl-C to stop")
         steps = _mount_steps_per_rev(client)
@@ -918,6 +961,102 @@ def cmd_mount(args: argparse.Namespace) -> int:
             f"{name:<14} {axis.position_counts} counts ({degrees:.4f}°) "
             f"{state} {mode} word={axis.status_word} init={axis.init_done}"
         )
+    return 0
+
+
+def _cmd_mount_satellite(args: argparse.Namespace, client: SynscanClient) -> int:
+    """SGP4 pass prediction and (optionally) slew-rate satellite tracking.
+
+    Default is a pure dry run: predicted az/alt and the slew rates the
+    mount would see. Moving the mount needs BOTH --track AND
+    --allow-motion (playbook.md §7) — anything else is refused.
+    """
+    try:
+        from skyshutter.satellite import Observer, Satellite
+
+        if args.tle:
+            sat = Satellite.from_file(args.tle)
+        else:
+            sat = Satellite.from_norad_id(args.norad, timeout=15.0)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"error preparing satellite: {exc}", file=sys.stderr)
+        return 1
+
+    observer = Observer(args.lat, args.lon, args.elev)
+    utc = lambda t: time.strftime("%H:%M:%S", time.gmtime(t))  # noqa: E731
+
+    if not args.track:
+        if args.now:
+            pos, daz, dalt = sat.track_rates(observer, time.time())
+            print(
+                f"{sat.name}: az={pos.az_deg:7.2f} alt={pos.alt_deg:6.2f} "
+                f"range={pos.range_km:7.1f} km rates az={daz:+.3f} alt={dalt:+.3f} deg/s (dry run)"
+            )
+            return 0
+        passes = sat.next_passes(observer, hours=12.0)
+        if not passes:
+            print(
+                f"{sat.name}: no pass above 10 deg within 12 h from {args.lat:.3f},{args.lon:.3f}"
+            )
+            return 0
+        print(f"{sat.name}: {len(passes)} visible passes within 12 h (times UTC, 10 deg horizon)")
+        for rise, peak, settle in passes:
+            peakpos = sat.position(observer, peak)
+            print(
+                f"  {utc(rise)} - {utc(settle)}  peak {utc(peak)} "
+                f"alt={peakpos.alt_deg:5.1f} az={peakpos.az_deg:6.1f}"
+            )
+        return 0
+
+    # --track: real motion; refuse without the explicit go
+    if not args.allow_motion:
+        print("refusing to move: pass --allow-motion as your explicit go", file=sys.stderr)
+        return 1
+    passes = sat.next_passes(observer, hours=6.0)
+    if not passes:
+        print("no upcoming pass within 6 h — nothing to track", file=sys.stderr)
+        return 1
+    rise, peak, settle = passes[0]
+    print(f"tracking {sat.name} pass {utc(rise)}-{utc(settle)} UTC; slewing to start point")
+    start = sat.position(observer, rise)
+    try:
+        client.goto_degrees(AXIS_AZ, start.az_deg)
+        client.goto_degrees(AXIS_ALT, start.alt_deg)
+        # wait until the gotos settled (or the lead time is up)
+        deadline = min(rise - args.lead, time.time() + 90.0)
+        while time.time() < deadline:
+            d_az = abs(client.position_degrees(AXIS_AZ) - start.az_deg) % 360.0
+            d_alt = abs(client.position_degrees(AXIS_ALT) - start.alt_deg)
+            if max(d_az, d_alt) < 0.5:
+                break
+            time.sleep(1.0)
+        time.sleep(max(0.0, rise - time.time()))
+        print(f"acquiring at {utc(time.time())}: following rates until the pass ends")
+        end = settle + 5.0
+        tick = 0.5
+        while time.time() < end:
+            _pos, daz, dalt = sat.track_rates(observer, time.time() + tick)
+            print(
+                f"{utc(time.time())} az={_pos.az_deg:7.2f} alt={_pos.alt_deg:6.2f} "
+                f"-> az={daz:+.3f} alt={dalt:+.3f} deg/s",
+                flush=True,
+            )
+            client.slew(AXIS_AZ, daz)
+            client.slew(AXIS_ALT, dalt)
+            time.sleep(tick)
+        client.stop_all()
+        print("pass over — both axes stopped")
+    except KeyboardInterrupt:
+        client.stop_all()
+        print("\ninterrupted — both axes stopped", file=sys.stderr)
+        return 130
+    except SynscanError as exc:
+        print(f"error: {exc} — attempting safety stop", file=sys.stderr)
+        try:
+            client.stop_all()
+        except SynscanError:
+            pass
+        return 1
     return 0
 
 

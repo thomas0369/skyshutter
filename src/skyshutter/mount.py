@@ -51,6 +51,15 @@ AXIS_AZ = 1
 AXIS_ALT = 2
 AXES = (AXIS_AZ, AXIS_ALT)
 
+# Motion-mode word (pysynscan motors.py semantics, verified against its
+# axis_set_motion_mode construction):
+#   digit1 bit0 = tracking(1)/goto(0), bit1 = speed (inverted between the
+#   two modes), digit2 bit0 = CCW.  Values below are the base words.
+MODE_GOTO = 0x00  # + 0x20 -> slow goto, + 0x01 -> CCW
+MODE_TRACK = 0x10  # + 0x20 -> fast tracking, + 0x01 -> CCW
+#: default breakpoint increment :M (pysynscan default)
+DEFAULT_BREAKSTEP = 0x0DAC
+
 
 def mount_host(override: str | None = None) -> str:
     return override or os.environ.get(ENV_MOUNT_HOST) or DEFAULT_HOST
@@ -81,7 +90,7 @@ class MotionDeniedError(SynscanError):
     """A motion command was attempted while ``allow_motion`` is off."""
 
 
-def encode_value(value: int, ndigits: int) -> str:
+def encode_value(value: int, ndigits: int = 6) -> str:
     """Encode an integer as synscan hex (byte-pairs reversed).
 
     0x123456 with ndigits=6 becomes "563412"; ndigits=0 yields "".
@@ -89,6 +98,8 @@ def encode_value(value: int, ndigits: int) -> str:
     if ndigits not in (0, 1, 2, 4, 6):
         raise ValueError(f"ndigits must be 0, 1, 2, 4 or 6, got {ndigits}")
     text = f"{value:0{ndigits}X}" if ndigits else ""
+    if len(text) % 2:  # single digit: no byte pairs to swap
+        return text
     return "".join(text[i : i + 2] for i in range(len(text) - 2, -1, -2))
 
 
@@ -182,6 +193,8 @@ class SynscanClient:
         self.port = mount_port(port)
         self.timeout = timeout
         self.allow_motion = allow_motion
+        self._steps_per_rev: int | None = None
+        self._timer_freq: int | None = None
         self._sock = sock if sock is not None else _udp_socket(timeout)
 
     # -- protocol core ------------------------------------------------
@@ -250,11 +263,12 @@ class SynscanClient:
         return str(self._query("f", axis))
 
     def axis_status(self, axis: int = AXIS_AZ) -> AxisStatus:
-        bits = decode_status_word(self.status_word(axis))
+        word = self.status_word(axis)
+        bits = decode_status_word(word)
         return AxisStatus(
             axis=axis,
             position_counts=self.position_counts(axis),
-            status_word=self.status_word(axis),
+            status_word=word,
             **bits,
         )
 
@@ -295,7 +309,7 @@ class SynscanClient:
     def set_step_period(self, axis: int, period: int) -> None:
         """:I — set the step timer period (speed); 0 means fastest."""
         self._require_motion()
-        self.transact("I", axis, period, ndigits=6)
+        self.transact("I", axis, max(1, period), ndigits=6)
 
     def start(self, axis: int) -> None:
         """:J — start moving with the configured mode/period."""
@@ -312,3 +326,120 @@ class SynscanClient:
         self._require_motion()
         for axis in AXES:
             self.transact("L" if hard else "K", axis)
+
+    # -- goto / targets (gated) ----------------------------------------
+
+    def initialize_axis(self, axis: int) -> None:
+        """:F — (re)initialize one motor controller (:F1/:F2).
+
+        The controller falls back to tracking mode after this; also the
+        first thing to try against the `alt init=False` status word.
+        """
+        self._require_motion()
+        self.transact("F", axis)
+
+    def set_goto_target_counts(self, axis: int, target: int) -> None:
+        """:S — goto target position (0x800000-offset like :E)."""
+        self._require_motion()
+        self.transact("S", axis, target + POSITION_OFFSET, ndigits=6)
+
+    def set_goto_increment(self, axis: int, increment: int) -> None:
+        """:H — remaining position for the slow-goto approach phase."""
+        self._require_motion()
+        self.transact("H", axis, increment + POSITION_OFFSET, ndigits=6)
+
+    def set_breakstep(self, axis: int, breakstep: int = 0x0DAC) -> None:
+        """:M — breakpoint increment (distance at which slow-goto decelerates)."""
+        self._require_motion()
+        self.transact("M", axis, breakstep, ndigits=6)
+
+    def set_switch(self, on: bool) -> None:
+        """:O — auxiliary switch on the mount (e.g. camera power)."""
+        self._require_motion()
+        self.transact("O", AXIS_AZ, 1 if on else 0, ndigits=1)
+
+    # -- calibration cache + degree layer -------------------------------
+
+    def _calibration(self) -> tuple[int, int]:
+        """Lazy (steps_per_rev, timer_freq) — one :a/:s round trip per axis 1."""
+        if self._steps_per_rev is None or self._timer_freq is None:
+            self._steps_per_rev = self.steps_per_rev()
+            self._timer_freq = self.timer_freq()
+        return self._steps_per_rev, self._timer_freq
+
+    def degrees2counts(self, degrees: float) -> float:
+        steps, _timer = self._calibration()
+        return degrees * steps / 360.0
+
+    def counts2degrees(self, counts: float) -> float:
+        steps, _timer = self._calibration()
+        return counts * 360.0 / steps
+
+    def dps2period(self, degrees_per_second: float) -> int:
+        """Convert deg/s to a step-timer period (14400 Hz / counts per second)."""
+        steps, timer = self._calibration()
+        counts_per_second = abs(degrees_per_second) * steps / 360.0
+        if counts_per_second <= 0:
+            return timer  # slowest possible period == standstill in tracking
+        return max(1, int(timer / counts_per_second))
+
+    def period2dps(self, period: int) -> float:
+        steps, timer = self._calibration()
+        return timer / period * 360.0 / steps
+
+    def position_degrees(self, axis: int) -> float:
+        return self.counts2degrees(self.position_counts(axis))
+
+    def set_position_degrees(self, axis: int, degrees: float) -> None:
+        self.set_position_counts(axis, round(self.degrees2counts(degrees)))
+
+    # -- high level moves (gated) ---------------------------------------
+
+    def track_mode(self, axis: int, ccw: bool = False, fast: bool = False) -> None:
+        """:G — tracking mode word (0x10 | 0x20*fast | 0x01*ccw)."""
+        self.set_motion_mode(axis, MODE_TRACK | (0x20 if fast else 0) | (0x01 if ccw else 0))
+
+    def goto_mode(self, axis: int, ccw: bool = False, fast: bool = False) -> None:
+        """:G — goto mode word; note the speed bit is inverted vs. tracking."""
+        self.set_motion_mode(axis, MODE_GOTO | (0x00 if fast else 0x20) | (0x01 if ccw else 0))
+
+    def slew(self, axis: int, degrees_per_second: float) -> None:
+        """Move one axis at a signed speed, switching direction safely.
+
+        While the axis already runs in tracking mode in the wanted
+        direction, only the :I period changes — no stop/start hop. That is
+        what keeps satellite tracking smooth. Sign: negative = CCW.
+        """
+        self._require_motion()
+        if degrees_per_second == 0:
+            self.stop(axis)
+            return
+        ccw = degrees_per_second < 0
+        status = self.axis_status(axis)
+        if status.running and (not status.tracking or status.counter_clockwise != ccw):
+            self.stop(axis)
+            status = self.axis_status(axis)
+        if not status.running:
+            self.track_mode(axis, ccw=ccw)
+        self.set_step_period(axis, self.dps2period(degrees_per_second))
+        if not status.running:
+            self.start(axis)
+
+    def slew_both(self, az_dps: float, alt_dps: float) -> None:
+        self.slew(AXIS_AZ, az_dps)
+        self.slew(AXIS_ALT, alt_dps)
+
+    def goto_degrees(self, axis: int, target_degrees: float) -> None:
+        """Classic goto: stop, direction-aware goto mode, :S target, :J."""
+        self._require_motion()
+        self.stop(axis)
+        current = self.position_degrees(axis)
+        ccw = target_degrees < current
+        self.goto_mode(axis, ccw=ccw, fast=True)
+        self.set_goto_target_counts(axis, round(self.degrees2counts(target_degrees)))
+        self.start(axis)
+
+    def sync_degrees(self, az_degrees: float, alt_degrees: float) -> None:
+        """:E both axes — tell the mount where it currently points."""
+        self.set_position_degrees(AXIS_AZ, az_degrees)
+        self.set_position_degrees(AXIS_ALT, alt_degrees)

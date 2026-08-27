@@ -9,6 +9,7 @@ from collections.abc import Iterator
 import pytest
 
 from skyshutter.mount import (
+    AXIS_ALT,
     AXIS_AZ,
     CR,
     MotionDeniedError,
@@ -22,7 +23,7 @@ from skyshutter.mount import (
 
 # Live values measured 27.08.2026 against the AZ-GTi (docs/FINDINGS.md)
 LIVE_VERSION = "0336C5"
-LIVE_STEPS = "00A41F"  # 0x1FA400 = 2073088 steps/rev
+LIVE_STEPS = "00A41F"  # byte-swapped 0x1FA400 = 2073600 steps/rev
 LIVE_TIMER = "403800"  # 0x003840 = 14400 Hz
 LIVE_J = "000080"  # 0x800000 -> position offset
 LIVE_F = ("100", "101")
@@ -145,7 +146,8 @@ def test_motion_allowed_sends_frames() -> None:
 
 
 class MountSim:
-    """Minimal UDP echo server imitating the AZ-GTi (read commands only)."""
+    """UDP server imitating the AZ-GTi: reads return live state, writes
+    mutate it, every incoming frame is logged for sequence assertions."""
 
     def __init__(self) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -153,6 +155,10 @@ class MountSim:
         self.sock.settimeout(2.0)
         self.addr = self.sock.getsockname()
         self.received: list[bytes] = []
+        #: axis -> position counts (offset encoding), motion mode, running
+        self.position = {1: 0x800000, 2: 0x800000}
+        self.mode = {1: 0, 2: 0}
+        self.running = {1: False, 2: False}
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
 
@@ -167,20 +173,47 @@ class MountSim:
 
     def reply(self, data: bytes) -> bytes:
         cmd = data[1:2].decode()
-        axis = data[2:3].decode()
+        axis = int(data[2:3].decode())
         if data == b":F3" + CR:
             return b"="
         table = {
             "e": LIVE_VERSION,
             "a": LIVE_STEPS,
             "s": LIVE_TIMER,
-            "j": LIVE_J,
         }
         if cmd in table:
             return b"=" + table[cmd].encode()
+        if cmd == "j":
+            return b"=" + encode_value(self.position[axis]).encode()
         if cmd == "f":
-            return b"=" + LIVE_F[int(axis) - 1].encode()
+            # word layout per FINDINGS: digit1 B0 tracking B1 ccw B2 fast,
+            # digit2 B0 running, digit3 B0 = NOT init done
+            flags = 0
+            if self.mode[axis] & 0x10:
+                flags |= 0x100
+            if self.mode[axis] & 0x01:
+                flags |= 0x200
+            if self.mode[axis] & 0x20:
+                flags |= 0x400
+            if self.running[axis]:
+                flags |= 0x010
+            return b"=" + format(flags, "03X").encode()
+        writes = {"E", "G", "I", "S", "H", "M", "O", "J", "K", "L", "F"}
+        if cmd in writes:
+            if cmd == "E":
+                self.position[axis] = int(decode_value(data[3:-1]))
+            elif cmd == "G":
+                self.mode[axis] = int(data[3:-1].decode(), 16)
+            elif cmd == "J":
+                self.running[axis] = True
+            elif cmd in ("K", "L"):
+                self.running[axis] = False
+            return b"="
         return b"!0"
+
+    def commands(self) -> list[str]:
+        """Logged frames as ':Xn...' strings without trailing CR."""
+        return [f.decode().rstrip("\r") for f in self.received]
 
     def close(self) -> None:
         self.sock.close()
@@ -204,9 +237,9 @@ def test_snapshot_against_simulator(sim: MountSim) -> None:
     assert snap.timer_freq == 0x3840
     az, alt = snap.axes
     assert az.position_counts == 0  # 0x800000 - offset
-    assert az.status_word == "100"
+    assert az.status_word == "000"  # no mode set in fresh sim
     assert az.init_done and not az.running
-    assert alt.status_word == "101"
+    assert alt.status_word == "000"
     # :F3, :j and :f frames all carry the CR terminator and no '#'
     assert all(msg.endswith(CR) and b"#" not in msg for msg in sim.received)
 
@@ -217,3 +250,94 @@ def test_simulator_rejects_garbage_like_real_mount(sim: MountSim) -> None:
         client.transact("z", AXIS_AZ)
     assert excinfo.value.code == 0  # unknown command
     assert sim.received[-1] == b":z1" + CR
+
+
+def test_motion_gate_blocks_high_level_api(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0)
+    for call in (
+        lambda: client.slew(AXIS_AZ, 2.0),
+        lambda: client.goto_degrees(AXIS_AZ, 180.0),
+        lambda: client.sync_degrees(10.0, 20.0),
+        lambda: client.initialize_axis(AXIS_ALT),
+    ):
+        with pytest.raises(MotionDeniedError):
+            call()
+    # sync_degrees calibrates lazily (read-only :a/:s may leak through),
+    # but not a single write frame may leave the client
+    write_cmds = {c[1] for c in sim.commands() if len(c) >= 2}
+    assert write_cmds <= {"a", "s"}, sim.commands()
+
+
+def test_slew_sequence_and_smooth_speed_change(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.slew(AXIS_AZ, 2.0)
+    # fresh axis: one status poll (:f+:j), track mode, lazy calibration,
+    # period (14400/(2 deg/s * 5760 c/deg) = 1.25 -> quantised to 1), start
+    assert sim.commands() == [
+        ":f1",
+        ":j1",
+        ":G110",
+        ":a1",
+        ":s1",
+        ":I1" + encode_value(1),
+        ":J1",
+    ]
+    # same direction speed change: status poll + :I only, no stop/:G/:J hop
+    client.slew(AXIS_AZ, 1.0)  # 14400/5760 = 2.5 -> 2
+    assert sim.commands()[7:] == [":f1", ":j1", ":I1" + encode_value(2)]
+
+
+def test_slew_direction_switch_stops_first(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.slew(AXIS_AZ, 2.0)
+    client.slew(AXIS_AZ, -2.0)  # reverse
+    cmds = sim.commands()[7:]
+    assert cmds[0] == ":f1"
+    assert cmds[2] == ":K1"  # soft stop before switching direction
+    assert ":G111" in cmds  # track CCW (0x10|0x01)
+    assert cmds[-1] == ":J1"
+
+
+def test_slew_zero_stops(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.slew(AXIS_AZ, 0.0)
+    assert sim.commands() == [":K1"]
+
+
+def test_goto_degrees_sequence(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.goto_degrees(AXIS_AZ, 90.0)
+    cmds = sim.commands()
+    assert cmds[0] == ":K1"
+    assert cmds[1] == ":j1"  # current position for direction decision
+    assert cmds[2:4] == [":a1", ":s1"]  # lazy calibration
+    assert cmds[4] == ":G100"  # goto fast CW (mode 0x00)
+    # :S uses the same 0x800000 offset as :E/:j (pysynscan motors.py:305)
+    assert cmds[5] == ":S1" + encode_value(0x800000 + round(2073600 * 90.0 / 360.0))
+    assert cmds[6] == ":J1"
+
+
+def test_sync_and_read_degrees(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.sync_degrees(10.0, 20.0)
+    assert sim.commands() == [
+        ":a1",
+        ":s1",
+        ":E1" + encode_value(0x800000 + round(2073600 * 10.0 / 360.0)),
+        ":E2" + encode_value(0x800000 + round(2073600 * 20.0 / 360.0)),
+    ]
+    assert client.position_degrees(AXIS_AZ) == pytest.approx(10.0, abs=1e-3)
+    assert client.position_degrees(AXIS_ALT) == pytest.approx(20.0, abs=1e-3)
+
+
+def test_initialize_axis_sends_axis_init(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.initialize_axis(AXIS_ALT)
+    assert sim.commands() == [":F2"]
+
+
+def test_set_switch_and_breakstep(sim: MountSim) -> None:
+    client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+    client.set_breakstep(AXIS_AZ, 0x0DAC)
+    client.set_switch(False)
+    assert sim.commands() == [":M1" + encode_value(0x0DAC), ":O10"]

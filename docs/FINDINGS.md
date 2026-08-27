@@ -117,6 +117,53 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (23:59: Motion-API + SGP4-Satellitengeometrie, Dry-Run am Pi live) — 204 Tests grün, Kette Mango→Mount bestätigt
+Aufbau:     Erweiterung von src/skyshutter/mount.py (alle AZ-GTi-Features:
+            :E/:G/:I/:S/:H/:M/:O/:J/:K/:L/:F, Grad-Konvertierung, slew/goto)
+            + NEU src/skyshutter/satellite.py (TLE→SGP4→topozentr. Az/Alt,
+            Pass-Suche). CLI: `mount slew`, `mount satellite [--passes|--now
+            |--track]`. SGP4 als optionale venv-Dependency (lazy import,
+            src/ bleibt stdlib-only).
+Belegt:     - **Vier gefangene Geometrie-Bugs** (alle von Tests aufgedeckt,
+              alle gefixt): (1) GMST-Formel braucht das VOLLE Julianische
+              Datum inkl. Tageszeit — sonst springt die Sternzeit nur 1×/Tag.
+              (2) Azimut-Konvention: atan2(east, -south) für Kompass-Nord,
+              nicht die astronomische Süd-Variante. (3) **Topozentrische
+              Korrektur fehlte komplett** — geozentrische Distanzen
+              produzierten „Pässe" von 30+ min und Slant-Ranges von
+              5.900 km bei 40° Elevation (ISS-Pässe sind 4–7 min, Range
+              400–1.200 km). (4) ECEF→TEME-Rotation lief transponiert —
+              sichtbar erst durch Konsistenztest „Punkt über Beobachter →
+              alt=90°" bei λ≠0. Nach Fixes: 5 ISS-Pässe/12 h, Peak-Ranges
+              410–1.194 km, Dauer 4–7 min — Muster wie Heavens-Above.
+            - **:S-Goto-Target nutzt denselben 0x800000-Offset wie :E/:j** —
+              verifiziert gegen pysynscan motors.py:305 (`targetCounts+
+              0x800000`). Damit ist goto_degrees konsistent zum Location-
+            - Motion-Design: slew() bei Richtungswechsel sanfter Stopp (:K),
+              bei gleicher Richtung NUR :I (kein Modus-Hop) — Voraussetzung
+              für ruckfreies Satelliten-Nachführen. Sequenzen von 8 Tests
+              festgenagelt (Frame-für-Frame gegen MountSim).
+            - **Perioden-Quantisierung**: Timer 14.400 Hz, 5.760 counts/° →
+              :I-Period = 14400/cps. Bei 2°/s → 1,25 → int 1 (~44 % zu
+              schnell); 1°/s → 2,5 → 2 (25 % zu langsam). Fein-Nachführen
+              unter ~0,06°/s (period ≥ 42) ist quasi kontinuierlich, darüber
+              stufig. Für ISS (0,2–1°/s über Berg) akzeptabel, für Rand-
+              Passagen grob. Evtl. später Interleave (Zwei-Perioden-Wechsel)
+            - Dry-Run AM PI LIVE: `mount satellite --norad 25544 --lat 50.11
+              --lon 8.68 --passes` → celestrak-Fetch (über Mango-WAN) +
+              5 Pässe, konsistent zur lokalen Rechnung (±20 s Scan-Raster).
+              `mount status` parallel grün — Mango-Brücke belastbar.
+            - Gate weiter dicht: `mount slew`/`satellite --track` ohne
+              --allow-motion verweigern rc=1 (auch am Pi getestet).
+Offen:      - Beobachterkoordinaten von Thomas nötig (Test nutzte Frankfurt-
+              Demo 50.11/8.68) — Vorraussetzung für echte Passliste.
+            - Echt-Bewegung (slew/goto/track) ungetestet am Gerät — wartet
+              auf OK; vorher alt-init=False klären (F2-Init?).
+            - celestrak-TLE bei mehrtägigem Betrieb cachen (Filename-Datum),
+              sonst Fetch je Aufruf.
+            - ISS-Vergleich gegen Heavens-Above/spotthestation noch offen
+              (nur Selbstkonsistenz + Plausibilität geprüft).
+
 ### 27.08.2026 (21:15: `skyshutter mount` am echten Mount) — CLI read-only grün, Gate verweigert korrekt
 Aufbau:     Pi → end0 → Mango (apcli0) → Mount-AP, UDP 11880. Erster
             Einsatz des neuen Moduls src/skyshutter/mount.py.
