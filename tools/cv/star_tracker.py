@@ -29,6 +29,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 import time
 import urllib.request
 from dataclasses import dataclass, field
@@ -290,6 +291,22 @@ def main() -> int:
         gray = cv2.imdecode(np.frombuffer(jpeg, np.uint8), cv2.IMREAD_GRAYSCALE)
         if gray is None:
             continue
+
+        # Safety Check: P1100 PTP LV pipeline collapses sometimes during uptime,
+        # delivering 83% uniform magenta (which becomes gray). Std < 1.0 means no optical content.
+        # This requires a full cycle of the stream wrapper to heal (re-wake camera).
+        if n_frames > 0 and n_frames % 5 == 0:  # check every 5th frame for performance
+            region_std = float(gray[300:1100].std())
+            if region_std < 1.0:
+                print(
+                    f"FATAL: Camera LV buffer collapsed (uniform fill, std={region_std:.2f}). Force-restarting stream.",
+                    file=sys.stderr,
+                )
+                import subprocess
+
+                subprocess.run(["sudo", "-n", "systemctl", "restart", "skyshutter-stream"])
+                sys.exit(2)
+
         dt_ms = (time.perf_counter() - t0) * 1000.0
         n_frames += 1
         blobs = detect_blobs(
