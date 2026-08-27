@@ -117,6 +117,27 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (12:35–12:39: Bilanz nach 3,5 h Dauerbetrieb) — Selbstheilung greift autonom; Magenta nicht wiedergekehrt; Watchdog v2 aktiv
+Aufbau:     Watchdog-Log (/tmp/lv_watchdog.log, 30-s-Takt) + Service-Journal
+            seit 09:26, /status-Sequenzvergleich t0/t8s.
+Belegt:     - **3,5 h Magenta-frei** seit Wake 10:04 (340+ Messungen).
+              Reine Zeitabhängigkeit damit geschwächt — Kollaps koppelte
+              vermutlich an die Session-Churn-Situation des Morgens.
+            - **WLAN-Flapping im 5–15-min-Takt** (Journal: 12:12, 12:25,
+              12:30 … je 5× Fail) — und der Härtungs-Loop arbeitete jedes
+              Mal autonom: 5 Fails → Wrapper → BLE-Re-Wake → Erholung.
+              Kein manueller Eingriff nötig. Das ist der Beleg, dass das
+              „stabile Tool"-Ziel auf Softwareseite jetzt getragen wird.
+            - Sequenz zählt (1384→1450/8 s ≈ 8 fps), closed=false —
+              std=63.17 konstant ist eine echt statische Szene, KEIN
+              Stale-Frame (Verwechslungsgefahr dokumentiert).
+            - Watchdog v2: prüft jetzt MAGENTA (std<1,0) UND STALE
+              (Sequenz 2 Messungen eingefroren bei closed=false) — beide
+              dokumentierten Versagensmodi abgedeckt. /status ist der
+              zuverlässige Vitalindikator, nicht die Bildvarianz allein.
+Offen:      Flapping-Ursache bleibt die physische −71-dBm-Funkstrecke —
+              Software kann nur aufräumen, nicht verhindern.
+
 ### 27.08.2026 (09:20–09:30: Magenta-Kollaps eingekreist + Auto-Heal) — Kamera-Wake heilt, LV-Restart nicht; Schutz aktiv
 Aufbau:     LV-Testskript (/tmp/lv_test.py) in frischer Session nach BLE-Wake:
             Frames via 0x9203 gezogen, vor/nach EndLiveView→StartLiveView.
