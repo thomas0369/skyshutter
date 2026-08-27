@@ -117,6 +117,29 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (09:05–09:15: „80 % roter Block") — Kamera liefert Frames mit synthetischem Magenta-Füllbereich; Transport/Server vollständig entlastet
+Aufbau:     Pixel-Karten (48×24/12 Text-Downscale) + Varianz-Analyse gegen
+            den laufenden MJPEG-Stream nach Nutzerbericht „roter Block".
+Belegt:     - JPEG-Transport sauber: SOI+EOI intakt, ~57 kB, cv2 dekodiert
+              vollständig; Kante liegt NICHT am JPEG-MCU-Raster.
+            - Frames aktualisieren sich live (Sequence zählt, heller Keil
+              wandert zwischen Proben) — kein eingefrorener Buffer.
+            - **Das Bild selbst:** obere ~17 % (bis Zeile 197/1168) echte
+              Szene (dunkler Bereich links, ausgebrannter heller Keil
+              rechts = vermutlich Sonne), darunter 83 % **bitperfekt
+              uniformes Magenta**: B=255/G=121/R=255, std=0.0 über die
+              gesamte Region. Keine echte Fläche/Optik erzeugt std=0 —
+              das ist synthetischer Füllbereich, den die Kamera selbst
+              encodiert.
+            - Nebelbefund: Bei toter Session serviert der MJPEG-Server der
+              alten Clients das letzte Frame endlos weiter (zwei Proben
+              byteidentisch, obwohl Sequence eingefroren). Für Tracker
+              wichtig: /status abfragen statt blind zu vertrauen.
+Offen:      Kamera-LCD-Check durch Thomas nötig: Zeigt das Display dieselbe
+              Magenta-Fläche? Dann LV-Pipeline/WB-Kollaps der Kamera
+              (Sonne im Bild?), sonst PTP-LV-Pfad. Gegenprobe möglich:
+              Standfoto (shoot) durch Foto-Pipeline ziehen und vergleichen.
+
 ### 27.08.2026 (08:45–09:00: API Reste, Zoom Verhalten & BLE Stresstest)
 Aufbau:     Test-Skript in `skyshutter-stream`-Lücke. Zoom (0x9016) mit Parametern getestet. Lese-Ops (0x90CC, 0x9006) getestet. BLE Stresstest (direkt nach Abbruch).
 Belegt:     - **Lese-Ops (0x90CC Picture Control, 0x9006 Profiles):** Werfen BEIDE
