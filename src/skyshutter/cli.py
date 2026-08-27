@@ -8,9 +8,11 @@ import logging
 import sys
 import time
 from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 
 from . import btsnoop, config, discovery, lssec
+from .mount import MotionDeniedError, SynscanClient, SynscanError
 from .nikon import NikonCamera, NikonOperation
 from .ptp import AccessCapability, DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import DEFAULT_PORT, PtpIpConnection, PtpIpError
@@ -190,6 +192,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--strings", action="store_true", help="only show packets carrying readable text"
     )
     snoop.add_argument("--handles", action="store_true", help="list the discovered handles instead")
+
+    # Not a camera command: talks UDP 11880 to the SynScan mount controller.
+    mount = sub.add_parser("mount", help="query/control the SynScan mount controller (UDP 11880)")
+    mount.add_argument(
+        "--mount-host",
+        dest="mount_host",
+        help="controller host (default 192.168.4.1 or $SKYSHUTTER_MOUNT_HOST)",
+    )
+    mount.add_argument("--mount-port", type=_int, dest="mount_port", help="default 11880")
+    mount.add_argument("--timeout", type=float, default=3.0)
+    msub = mount.add_subparsers(dest="mount_command", required=True)
+
+    mstatus = msub.add_parser("status", help="one-shot readout of firmware, position and status")
+    mstatus.add_argument("--json", action="store_true", help="machine-readable dump")
+
+    mwatch = msub.add_parser("watch", help="poll position/status in a loop until Ctrl-C")
+    mwatch.add_argument("--interval", type=float, default=1.0, help="seconds between polls")
+
+    mstop = msub.add_parser("stop", help="safety stop both axes (decelerate; --hard for instant)")
+    mstop.add_argument(
+        "--allow-motion",
+        action="store_true",
+        help="explicit go — without it the command refuses to move anything",
+    )
+    mstop.add_argument("--hard", action="store_true", help="instant stop (:L) instead of :K")
 
     return parser
 
@@ -822,6 +849,85 @@ def cmd_wifi(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_mount(args: argparse.Namespace) -> int:
+    """Talk to the SynScan mount controller over UDP (see docs/FINDINGS.md).
+
+    Reads are always allowed; the only write exposed here is `stop`, and it
+    demands --allow-motion as the explicit go (playbook.md §7).
+    """
+    client = SynscanClient(
+        host=args.mount_host,
+        port=args.mount_port,
+        timeout=args.timeout,
+        allow_motion=getattr(args, "allow_motion", False),
+    )
+
+    if args.mount_command == "stop":
+        try:
+            client.stop_all(hard=args.hard)
+        except MotionDeniedError:
+            print(
+                "refusing to touch the mount: pass --allow-motion as your explicit go",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"stop sent to both axes ({'hard :L' if args.hard else 'decelerate :K'})")
+        return 0
+
+    if args.mount_command == "watch":
+        print(f"polling {client.host}:{client.port} every {args.interval}s — Ctrl-C to stop")
+        steps = _mount_steps_per_rev(client)
+        while True:
+            stamp = time.strftime("%H:%M:%S")
+            try:
+                axes = [client.axis_status(axis) for axis in (1, 2)]
+            except SynscanError as exc:
+                print(f"{stamp} error: {exc}", flush=True)
+                time.sleep(args.interval)
+                continue
+            cells = [
+                f"{name}={axis.position_counts}"
+                + (f" ({axis.position_counts / steps * 360:.3f}°)" if steps else "")
+                + f"[{axis.status_word}]"
+                for name, axis in zip(("az", "alt"), axes, strict=True)
+            ]
+            running = any(axis.running for axis in axes)
+            print(f"{stamp} {' '.join(cells)}{' RUNNING' if running else ''}", flush=True)
+            time.sleep(args.interval)
+
+    # default: status
+    try:
+        snap = client.snapshot()
+    except SynscanError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(asdict(snap), indent=2))
+        return 0
+    print(f"host           {snap.host}")
+    print(f"initialized    {snap.initialized}")
+    print(f"version        {snap.version:#08x}")
+    print(f"steps/rev      {snap.steps_per_rev}")
+    print(f"timer freq     {snap.timer_freq} Hz")
+    for axis in snap.axes:
+        name = "az" if axis.axis == 1 else "alt"
+        degrees = axis.position_counts / snap.steps_per_rev * 360
+        state = "running" if axis.running else "stopped"
+        mode = "tracking" if axis.tracking else "goto"
+        print(
+            f"{name:<14} {axis.position_counts} counts ({degrees:.4f}°) "
+            f"{state} {mode} word={axis.status_word} init={axis.init_done}"
+        )
+    return 0
+
+
+def _mount_steps_per_rev(client: SynscanClient) -> int:
+    try:
+        return client.steps_per_rev()
+    except SynscanError:
+        return 0
+
+
 COMMANDS = {
     "probe": cmd_probe,
     "info": cmd_info,
@@ -836,6 +942,7 @@ COMMANDS = {
     "raw": cmd_raw,
     "wifi": cmd_wifi,
     "btsnoop": cmd_btsnoop,
+    "mount": cmd_mount,
 }
 
 
