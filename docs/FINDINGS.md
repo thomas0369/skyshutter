@@ -117,6 +117,26 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (08:06–08:30: Pi Brownout & Wakeup-Recovery)
+Aufbau:     Pi stürzte um 08:06 hart ab. Ursachenforschung per ssh nach Reboot.
+Belegt:     - **Ursache Pi-Crash:** Chronische Unterspannung. `vcgencmd get_throttled`
+              liefert `0x50000` (Unterspannung + Throttling in der Vergangenheit).
+              Kernel-Log war voll mit `Undervoltage detected!` im Minutentakt.
+              Die Kombination Pi + Mango + Akku-Ladung ist zu viel für das Netzteil/Kabel.
+            - **BLE-Wakeup Recovery:** Kamera reagierte nach dem Neustart nicht auf
+              Bluetooth-Handshake (Fehler: `UNLIKELY_ERROR 14` / `Not connected`).
+              Ein `sudo systemctl restart bluetooth` auf dem Pi heilte den Pi-Stack,
+              die Kamera antwortete danach sofort sauber auf BLE.
+            - **PTPIP-Info 0x90E0:** Antwortet mit `OPERATION_NOT_SUPPORTED 0x2005`
+              und **bricht die PTP-Session hart ab** (Folgebefehle erhalten
+              `Connection refused`).
+            - **LiveView Tages-Test:** Unmittelbar danach startete der Stream-Test
+              bei Tageslicht erfolgreich. Saubere Frames (~57 kB) kamen sofort.
+              Das beweist: Das nächtliche "0 Frames" Problem lag nicht am Netzwerk
+              oder Code, sondern am Kamera-Zustand (vermutlich Objektiv eingefahren,
+              Standby, oder Playback-Modus aktiv, was StartLiveView zwar mit OK
+              quittiert, aber keine Frames liefert).
+
 ### 27.08.2026 (00:36–01:10: Nach dem Kamera-Neustat) — Session lebt, aber ZERO Frames zum Konsumenten; BLE-Wake kollabiert bei Schnellfolge
 Aufbau:     Nach Thomass Kamera-Neustart: Ein Weckzyklus erfolgreich
             (00:37 join Versuch 13, battery 100 %), Stream „live view on".
