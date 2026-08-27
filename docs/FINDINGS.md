@@ -117,6 +117,53 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (spät: Bewegungstests AZ am echten Mount) — Goto exakt, Raten FEST, :I wirkungslos
+Aufbau:     Drei Skript-Läufe am Pi, AZ-Achse (Alt nach Thomas' Fund
+            „sehr fest" gesperrt — vermutl. Höhenklemmung überdreht, Encoder-
+            Handtest leer). Protokoll je Schritt: settle() = :L + polling bis
+            running=False, dann Messung über 1.5–2 s.
+Belegt:     - **Erste Bewegung überhaupt**: slew +0.5°/s, 60.488 counts in
+              ~4 s — Motion-Kette Pi→Mango→Mount physisch bewiesen.
+            - **:E exakt**: 5.000° → 28800 counts, 0° → 0 (5760 c/° bestätigt).
+            - **Goto (:S/:J) exakt**: 26.736°→0.000° in 9.8 s (≈2.7°/s);
+              10.000°-Goto in 5.65 s (1.77°/s); Endabweichung ≤0.002°.
+            - **Raten sind FEST, :I hat KEINE Wirkung**: Slow-Track (:G0x10):
+              Perioden 1/2/5/10 → alle 2.05–2.07°/s. Fast-Track (:G0x30):
+              Perioden 1/2/10 → alle 1.57–1.58°/s („fast" ist langsamer!).
+              :s1 meldet Timer 14.400 Hz — aber die AZ-GTi-Firmware ignoriert
+              :I im Track-Modus offenbar komplett. dps2period() ist damit für
+              DIESE Hardware wertlos → Rot der Tracking-Logik.
+            - **Richtungswechsel (CCW-Bit) OK nach Stillstand**: :G0x11 +
+              Start → messbar −2.074°/s, word=311 (B0+B1 gesetzt, exakt
+              unsere Bit-Decodierung). Erster Fehlschlag erklärbar: :K ist
+              Auslauframpe, Moduswechsel bei laufender Achse wurde von der
+              Firmware verschluckt (kein Error, keine Richtungsänderung).
+              Regel: vor jedem :G/:I/Start running=False erzwingen.
+            - **:K = weicher Stopp (Rampe)**: Achse läuft 1–2 s nach.
+              **:L = sofort** — ABER im fast-CCW-Zustand (:G31) reagierte
+              der Mount auf :L1 mit Timeout, danach Müll-Antwort ‚AT'.
+              Recovery: stop_all nach 2 s klappte, Status+Version lesbar.
+              :L nur als Notbremse, danach Verbindung verifizieren.
+            - **:F1 toggelt Bit 3** (word 100→101): Bedeutung unklar, aber
+              Bewegung läuft mit 101 normal. Alt zeigte ab Einschalten 101 —
+              das „alt init=False"-Rätsel war eine Fehllesung, kein Blocker.
+              (Ob 101 ursächlich mit der festen Alt-Achse hängt: offen.)
+            - **:M (Breakstep, Default 0x0DAC) ok; :O Schalter ok** — Mount
+              überlebt :O-Toggle ohne sichtbare Wirkung (kein Zubehörport
+              belegt). Verbindung blieb stehen.
+Konsequenz: Satelliten-Nachführen ist mit :I nicht ratengesteuert machbar.
+            Design-Wechsel nötig: Goto-Pulsing (wiederholte kleine :S-Offsets)
+            oder Tastverhältnis aus den zwei Festraten + :K. Ausarbeiten,
+            bevor `satellite --track` an echte Hardware darf.
+Offen:      - :H (Goto-Increment) NICHT getestet — pysynscan selbst „NOT IN
+              USE, HAVE TO BE TESTED", Recovery nur stromlos. Asymmetrisches
+              Risiko, kein Nutzen → übersprungen.
+            - Anomalie az_fulltest: eine Einzelmessung +4.05°/s bei :I=1
+              (unreines Protokoll, Achse evtl. noch im Auslauf) — im sauberen
+              Protokoll nicht reproduzierbar, nicht weiter verfolgt.
+            - Alt: Klemmung lösen (Thomas), Encoder-Handtest wiederholen,
+              dann Alt-Feature-Parität testen.
+
 ### 27.08.2026 (23:59: Motion-API + SGP4-Satellitengeometrie, Dry-Run am Pi live) — 204 Tests grün, Kette Mango→Mount bestätigt
 Aufbau:     Erweiterung von src/skyshutter/mount.py (alle AZ-GTi-Features:
             :E/:G/:I/:S/:H/:M/:O/:J/:K/:L/:F, Grad-Konvertierung, slew/goto)
