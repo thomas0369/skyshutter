@@ -299,7 +299,8 @@ def main() -> int:
             region_std = float(gray[300:1100].std())
             if region_std < 1.0:
                 print(
-                    f"FATAL: Camera LV buffer collapsed (uniform fill, std={region_std:.2f}). Force-restarting stream.",
+                    f"FATAL: Camera LV buffer collapsed "
+                    f"(uniform fill, std={region_std:.2f}). Force-restarting stream.",
                     file=sys.stderr,
                 )
                 import subprocess
