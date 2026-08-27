@@ -117,6 +117,40 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (20:40–21:00: Mango als Mount-Brücke — Kette Pi→Mango→Mount steht) — ARP-Falle des SynScan-AP entschärft
+Topologie:  Thomas' Idee statt Station Mode / Zweitstick: Der Mango
+            (GL-MT300N-V2) verbindet sich per WLAN-Client (STA) mit dem
+            Mount-AP. Kamera bleibt unberührt am Pi-wlan0. Beweis der
+            Parallelität offen (Kamera-Akku leer, s.u.), Wege getrennt
+            aber unabhängig.
+Belegt:     - Mango hängt PER KABEL im Heimnetz (eth0.2=192.168.1.143) —
+              sein Funkchip (MTK-Treiber ra0/apcli0) lief nur als AP.
+              SSH-Kette bei Umbau unberührt.
+            - OpenWrt: neues Interface `mnt` (dhcp, defaultroute=0,
+              peerdns=0 — sonst klaut der Mount die Pi-Default-Route!)
+              + `mount_sta` (mode=sta, SynScan, none) in wan-Firewallzone
+              (masq). Kanal fix 2 (AP folgt dem STA).
+            - STA assoziiert sofort, DHCP vergibt 192.168.4.3. ABER:
+              **Mount-AP beantwortet ARP-Requests nicht** (Neighbor
+              incomplete) — der SynScan-Funkchip ist so stromsparend,
+              dass er Broadcasts verpasst; Unicast geht durch.
+            - Fix: `ip neigh replace 192.168.4.1 lladdr E8:06:90:29:EC:AD
+              dev apcli0 nud permanent` + hotplug-Skript
+              /etc/hotplug.d/iface/30-mountarp auf dem Mango (funktionstest
+              grün). Danach ping 0 % loss, RTT 2–311 ms (Power-Save-
+              Streuung, für UDP-Guiding ok).
+            - **Ende-zu-Ende vom Pi:** UDP :F3 → `=\r`, :e1 → `=0336C5\r`
+              durch end0→Mango→apcli0→Mount. Masquerading+Forwarding
+              funktionieren. Kein AP-Wechsel des Pi mehr nötig.
+Nebenfunde: - Kamera-Stream seit ~20:50 down: Wrapper im BLE-Weckzyklus,
+              „keine frischen Zugangsdaten". Nach 11 h Dauerstream seit
+              10:04 ist leerer Akku die naheliegendste Ursache (Physik,
+              kein Softwarefehler). Watchdog meldet „status abwesend",
+              greift bewusst nicht ein, solange der Wrapper selbst neu
+              startet — gewünschtes Verhalten.
+            - `iw dev` segfault auf dem Mango (MTK-Treiber), iwinfo zeigt
+              Signal „unknown" — Diagnose dort nur über ubus/ip neigh.
+
 ### 27.08.2026 (13:30–14:10: AZ-GTi Protokoll entschlüsselt) — UDP 11880, Synscan-Serial-Framing, `!3`=InvalidCharacter
 Aufbau:     Pi per wlan0 mit Mount-AP „SynScan" (offen, Kanal 2, 55/100)
             verbunden; UDP-Fragen an 192.168.4.1:11880. Kamera-Stream für
