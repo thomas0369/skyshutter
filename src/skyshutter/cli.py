@@ -12,7 +12,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import btsnoop, config, discovery, lssec
-from .mount import AXIS_ALT, AXIS_AZ, MotionDeniedError, SynscanClient, SynscanError
+from .mount import MotionDeniedError, SynscanClient, SynscanError
 from .nikon import NikonCamera, NikonOperation
 from .ptp import AccessCapability, DeviceInfo, OperationCode, PtpError, ResponseCode, code_name
 from .ptpip import DEFAULT_PORT, PtpIpConnection, PtpIpError
@@ -238,6 +238,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="actually drive the mount (default is dry-run printout)",
     )
     msat.add_argument("--lead", type=float, default=30.0, help="seconds to slew before acquisition")
+    msat.add_argument(
+        "--pulse",
+        type=float,
+        default=1.0,
+        help="goto-pulse interval in seconds while tracking (default 1.0)",
+    )
     msat.add_argument("--allow-motion", action="store_true", help="explicit go for --track")
 
     return parser
@@ -965,11 +971,12 @@ def cmd_mount(args: argparse.Namespace) -> int:
 
 
 def _cmd_mount_satellite(args: argparse.Namespace, client: SynscanClient) -> int:
-    """SGP4 pass prediction and (optionally) slew-rate satellite tracking.
+    """SGP4 pass prediction and (optionally) goto-pulse satellite tracking.
 
-    Default is a pure dry run: predicted az/alt and the slew rates the
-    mount would see. Moving the mount needs BOTH --track AND
-    --allow-motion (playbook.md §7) — anything else is refused.
+    Default is a pure dry run: predicted passes and current az/alt.
+    Moving the mount needs BOTH --track AND --allow-motion (playbook.md
+    §7) — anything else is refused. Tracking re-issues goto targets
+    every --pulse seconds because the firmware ignores :I (fixed rates).
     """
     try:
         from skyshutter.satellite import Observer, Satellite
@@ -1018,34 +1025,33 @@ def _cmd_mount_satellite(args: argparse.Namespace, client: SynscanClient) -> int
         return 1
     rise, peak, settle = passes[0]
     print(f"tracking {sat.name} pass {utc(rise)}-{utc(settle)} UTC; slewing to start point")
-    start = sat.position(observer, rise)
     try:
-        client.goto_degrees(AXIS_AZ, start.az_deg)
-        client.goto_degrees(AXIS_ALT, start.alt_deg)
-        # wait until the gotos settled (or the lead time is up)
-        deadline = min(rise - args.lead, time.time() + 90.0)
-        while time.time() < deadline:
-            d_az = abs(client.position_degrees(AXIS_AZ) - start.az_deg) % 360.0
-            d_alt = abs(client.position_degrees(AXIS_ALT) - start.alt_deg)
-            if max(d_az, d_alt) < 0.5:
-                break
-            time.sleep(1.0)
-        time.sleep(max(0.0, rise - time.time()))
-        print(f"acquiring at {utc(time.time())}: following rates until the pass ends")
-        end = settle + 5.0
-        tick = 0.5
-        while time.time() < end:
-            _pos, daz, dalt = sat.track_rates(observer, time.time() + tick)
+        from skyshutter.tracking import GotoPulseTracker, acquire
+
+        def target(t: float) -> tuple[float, float]:
+            pos = sat.position(observer, t)
+            return pos.az_deg, pos.alt_deg
+
+        if not acquire(client, target, rise, deadline_s=max(90.0, args.lead * 3.0)):
             print(
-                f"{utc(time.time())} az={_pos.az_deg:7.2f} alt={_pos.alt_deg:6.2f} "
-                f"-> az={daz:+.3f} alt={dalt:+.3f} deg/s",
-                flush=True,
+                "could not reach the start point in time — aborting, axes stopped", file=sys.stderr
             )
-            client.slew(AXIS_AZ, daz)
-            client.slew(AXIS_ALT, dalt)
-            time.sleep(tick)
-        client.stop_all()
-        print("pass over — both axes stopped")
+            client.stop_all()
+            return 1
+        wait = rise - time.time()
+        if wait > 0:
+            print(f"start point reached; waiting {wait:.0f} s for the pass to rise")
+            time.sleep(wait)
+        print(f"acquiring at {utc(time.time())}: goto-pulsing every {args.pulse:.1f} s")
+        tracker = GotoPulseTracker(
+            client, pulse_s=args.pulse, announce=lambda msg: print(msg, flush=True)
+        )
+        report = tracker.track(target, end_time=settle + 5.0)
+        print(
+            f"pass over — {report.pulses} pulses, "
+            f"max error {report.max_error_deg:.2f} deg, "
+            f"mean {report.mean_error_deg:.2f} deg; both axes stopped"
+        )
     except KeyboardInterrupt:
         client.stop_all()
         print("\ninterrupted — both axes stopped", file=sys.stderr)

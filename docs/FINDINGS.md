@@ -23,15 +23,15 @@ Diesen Block liest eine neue Session zuerst. Er wird bei jeder Runde überschrie
 
 | | |
 |---|---|
-| **Phase** | **Mount-Bewegung live bewiesen, Satellitenkette live (dry-run) — Tracking-Design-Wechsel nötig: die AZ-GTi ignoriert `:I`, es gibt nur zwei Festraten** |
-| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **Live-View 1552×1162 FULL, systemd selbstheilend** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Rauschfloor 0,06 px** · **AZ-GTi: UDP-Client + komplette Motion-API an echter HW** (`:E` exakt, Goto ±0,002°, slew/Richtung/Stopp verifiziert) · **SGP4-Satellitengeometrie live** (celestrak-Fetch + Passliste am Pi) · 204 Tests grün |
+| **Phase** | **Goto-Pulsing implementiert und im Simulator validiert — bereit für Live-Test (nur AZ) am echten Mount** |
+| **Erreicht** | 38 Operationen, 22 Properties gemessen · **LsSec geknackt** · **Classic-Bond am Raspberry** · **Live-View 1552×1162 FULL, systemd selbstheilend** · **Capture+Download an HW validiert** · **ISO/EV/Drive schreibbar** · **Zoom kalibriert** · **CV-Rauschfloor 0,06 px** · **AZ-GTi: UDP-Client + komplette Motion-API an echter HW** (`:E` exakt, Goto ±0,002°, slew/Richtung/Stopp verifiziert) · **SGP4-Satellitengeometrie live** (celestrak-Fetch + Passliste am Pi) · **Goto-Pulsing-Tracker** (`tracking.py`, lead = Pulse, Fehler < 0,35° am Synthpass im Sim) · 210 Tests grün |
 | **Erreicht (alt)** | **Feld-Rig steht.** Raspberry (reComputer R2140) = Funk-Zentrale, Mango = AP/Router/Zugang (192.168.1.143 WAN, LAN 192.168.3.178, DNAT 2222→22). Mango hängt zusätzlich als STA im Mount-AP (SynScan) → Pi erreicht den AZ-GTi (192.168.4.1:11880) direkt. |
-| **Offenes Gate** | **Rate:** `:I` wirkt nicht — Track-Modi liefern fest 2,07°/s (slow) bzw. 1,57°/s (fast); `dps2period` damit wertlos. `satellite --track` braucht Goto-Pulsing (kleine `:S`-Offsets im Sekundentakt) statt Ratensteuerung. Dazu: **Alt-Achse mechanisch fest** (Höhenklemmung? — Thomas prüft; Encoder-Handtest lief leer), **Kamera-Akku leer** (Stream seit 27.08. ~20:50 tot). |
-| **Nächster Schritt** | (a) **Goto-Pulsing im Simulator designen + testen**, bevor `--track` wieder an echte HW darf. (b) Thomas: Höhenklemmung lösen → Encoder-Handtest (`:j2`-Monitor) → Alt-Feature-Parität. (c) Thomas: Beobachterkoordinaten liefern (Demo 50.11/8.68 nur Funktionsbeweis). (d) Kamera-Akku laden → Parallel-Beweis Stream+Mount. |
+| **Offenes Gate** | **Pulsing noch nie am echten Mount** — `:K`-Rampe + Goto-Restart mitten in Bewegung (Client sendet `:K` vor jedem `:S`) ist am Gerät ungetestet. Dazu: **Alt-Achse mechanisch fest** (Höhenklemmung? — Thomas prüft; Encoder-Handtest lief leer), **Kamera-Akku leer** (Stream seit 27.08. ~20:50 tot). |
+| **Nächster Schritt** | (a) **Pulsing-Fahrprobe am echten Mount (nur AZ)**: acquire + 30 s Track auf Sat-Position mit `--pulse 2` (sanft), Abbruch via `mount stop` bereit. (b) Thomas: Höhenklemmung lösen → Encoder-Handtest (`:j2`-Monitor) → Alt-Feature-Parität. (c) Thomas: Beobachterkoordinaten liefern (Demo 50.11/8.68 nur Funktionsbeweis). (d) Kamera-Akku laden → Parallel-Beweis Stream+Mount. |
 | **Danach** | Erster echter ISS-Pass mit `mount satellite --norad 25544 … --track --allow-motion`. Ausstiegspfad bei zu hakeligem Pulsing: Upgrade-Pfad recherchiert (28.08., plan.md Phase M): Harmonic-Alt-Az (iOptron HAZ31/43, 6°/s, Firmware „Satellite tracking control enabled") oder TTS-160 Panther (SkyTrack-Integration, ab ~1.700 €). |
 | **Nicht erreichbar** | manueller Fokus (`0x9204` fehlt), Bulb-Auslöser (`0x920C` fehlt), Auslösen über Bluetooth (Feature-Bit 11 = 0) · variable Slew-Raten am AZ-GTi (Firmware ignoriert `:I`, doppelt gemessen 27.08.) |
 | **Unsere Kennung** | wechselt bei jedem Pairing; die vom letzten Lauf steht im Protokoll |
-| **Stand vom** | 2026-08-28 (Mount-Motion + Satelliten-Dry-Run live; Festraten-Fund) |
+| **Stand vom** | 2026-08-28 (Goto-Pulsing gebaut + simulativ validiert, 210 Tests) |
 
 **Erste echte Messung liegt vor** (22.08.2026, BLE-GATT-Baum, unten). Der
 PTP/IP-Pfad ist davon unberührt: der gesamte Code in `ptp.py`, `ptpip.py`,
@@ -136,6 +136,26 @@ oft mehr wert als die Frage.
 ## Messungen
 
 Neueste zuerst.
+
+### 28.08.2026 (Goto-Pulsing implementiert — Simulatortest mit gemessener Physik)
+Aufbau:     Kein Hardware-Lauf. `tests/test_mount.py` MountSim um zeitbasierte
+            Bewegungsphysik erweitert — Raten sind die am 27.08. am echten Mount
+            gemessenen (Goto 1,77°/s, Track slow 2,07°/s / fast 1,57°/s, `:I`
+            ignoriert). Injizierbare Uhr (FakeClock) statt Sleeps. Neues Modul
+            `src/skyshutter/tracking.py`: `GotoPulseTracker` (goto-Pulse im
+            Sekundentakt, Vorhalte = volle Pulslänge) + `acquire()`.
+Messung:    Synthpass (Rampe az 0,6°/s, alt 0,25°/s — ISS-Form nahe Kulmination),
+            acquire auf Rise-Punkt (100° Goto), dann 60 Pulse à 1,0 s:
+            max. Nachführfehler **< 0,35°**, Mittelwert **< 0,15°**;
+            Endposition < 1° hinter der Sat-Position; Achsen nach Ende/Interrupt
+            garantiert gestoppt (`stop_all` in jedem Ausgang).
+Fazit:      Design-Wechsel von Raten- auf Pulssteuerung ist im Sim trägfähig:
+            die Goto-Rate (1,77°/s) liegt über jeder LEO-Winkelrate (~1°/s), der
+            Mount hüpft treppenförmig mit SUB-Grad-Fehlern mit. CLI `--track`
+            auf Pulsing umgebaut (`--pulse`, Standard 1,0 s), Ratenlogik raus.
+Offen:      Am echten Mount ungetestet — dort kommt die `:K`-Rampe vor jedem
+            `:S`-Restart dazu (Client-goto sendet `:K` zuerst); ob der Mount
+            das Pulsing ruckelfrei mitmacht, entscheidet die Fahrprobe (nur AZ).
 
 ### 27.08.2026 (spät: Bewegungstests AZ am echten Mount) — Goto exakt, Raten FEST, :I wirkungslos
 Aufbau:     Drei Skript-Läufe am Pi, AZ-Achse (Alt nach Thomas' Fund

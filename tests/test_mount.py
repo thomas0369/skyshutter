@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import socket
 import threading
+import time
 from collections.abc import Iterator
+from typing import Protocol
 
 import pytest
 
@@ -145,11 +147,53 @@ def test_motion_allowed_sends_frames() -> None:
 # -- loopback "mount simulator": replies like the AZ-GTi measured today --
 
 
+class Clock(Protocol):
+    """Injectable time source — tests fast-forward instead of sleeping."""
+
+    def now(self) -> float: ...
+
+    def sleep(self, seconds: float) -> None: ...
+
+
+class _RealClock:
+    def now(self) -> float:
+        return time.monotonic()
+
+    def sleep(self, seconds: float) -> None:
+        time.sleep(seconds)
+
+
+class FakeClock:
+    """Time travel for tests: sleep() just advances the clock."""
+
+    def __init__(self, start: float = 1_000_000.0) -> None:
+        self.t = start
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.t += seconds
+
+
 class MountSim:
     """UDP server imitating the AZ-GTi: reads return live state, writes
-    mutate it, every incoming frame is logged for sequence assertions."""
+    mutate it, every incoming frame is logged for sequence assertions.
 
-    def __init__(self) -> None:
+    Motion physics per FINDINGS 27.08.: goto moves at a fixed rate
+    (default 1.77 deg/s as measured), track modes run at the two fixed
+    rates (slow 2.07, fast 1.57 deg/s — :I is ignored by the firmware).
+    Positions are computed lazily from an injectable clock so tests can
+    time-travel without sleeping. :K/:L freeze the axis instantly (the
+    real deceleration ramp is ignored — conservative for pulsing tests).
+    """
+
+    GOTO_RATE_DPS = 1.77
+    TRACK_SLOW_DPS = 2.07
+    TRACK_FAST_DPS = 1.57
+    COUNTS_PER_DEG = 5760
+
+    def __init__(self, clock: Clock | None = None) -> None:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(("127.0.0.1", 0))
         self.sock.settimeout(2.0)
@@ -159,8 +203,37 @@ class MountSim:
         self.position = {1: 0x800000, 2: 0x800000}
         self.mode = {1: 0, 2: 0}
         self.running = {1: False, 2: False}
+        self._goto_target: dict[int, int | None] = {1: None, 2: None}
+        self._t0 = {1: 0.0, 2: 0.0}
+        self._clock = clock or _RealClock()
         self._thread = threading.Thread(target=self._loop, daemon=True)
         self._thread.start()
+
+    # -- motion physics ------------------------------------------------
+
+    def _advance(self, axis: int) -> None:
+        """Move a running axis up to the current clock time, lazily."""
+        if not self.running[axis]:
+            return
+        target = self._goto_target[axis]
+        mode = self.mode[axis]
+        if target is not None and not (mode & 0x10):  # goto mode
+            rate = int(self.GOTO_RATE_DPS * self.COUNTS_PER_DEG)
+            delta = target - self.position[axis]
+            elapsed = int((self._clock.now() - self._t0[axis]) * rate)
+            if abs(elapsed) >= abs(delta):
+                self.position[axis] = target
+                self.running[axis] = False
+                self._goto_target[axis] = None
+            else:
+                self.position[axis] += elapsed if delta > 0 else -elapsed
+            self._t0[axis] = self._clock.now()
+        elif mode & 0x10:  # track mode: fixed rate, no target
+            dps = self.TRACK_FAST_DPS if mode & 0x20 else self.TRACK_SLOW_DPS
+            rate = int(dps * self.COUNTS_PER_DEG)
+            step = int((self._clock.now() - self._t0[axis]) * rate)
+            self.position[axis] += -step if mode & 0x01 else step
+            self._t0[axis] = self._clock.now()
 
     def _loop(self) -> None:
         while True:
@@ -174,6 +247,8 @@ class MountSim:
     def reply(self, data: bytes) -> bytes:
         cmd = data[1:2].decode()
         axis = int(data[2:3].decode())
+        if axis in (1, 2):
+            self._advance(axis)
         if data == b":F3" + CR:
             return b"="
         table = {
@@ -204,10 +279,18 @@ class MountSim:
                 self.position[axis] = int(decode_value(data[3:-1]))
             elif cmd == "G":
                 self.mode[axis] = int(data[3:-1].decode(), 16)
+            elif cmd == "S":
+                self._goto_target[axis] = int(decode_value(data[3:-1]))
             elif cmd == "J":
-                self.running[axis] = True
+                if self.running[axis]:
+                    # restart: re-anchor motion at the current time
+                    self._t0[axis] = self._clock.now()
+                else:
+                    self.running[axis] = True
+                    self._t0[axis] = self._clock.now()
             elif cmd in ("K", "L"):
                 self.running[axis] = False
+                self._goto_target[axis] = None
             return b"="
         return b"!0"
 
@@ -341,3 +424,64 @@ def test_set_switch_and_breakstep(sim: MountSim) -> None:
     client.set_breakstep(AXIS_AZ, 0x0DAC)
     client.set_switch(False)
     assert sim.commands() == [":M1" + encode_value(0x0DAC), ":O10"]
+
+
+# -- motion physics: the measured fixed rates, replayed on a fake clock --
+
+
+def test_goto_moves_at_measured_rate() -> None:
+    clock = FakeClock()
+    with _SimFactory(clock) as sim:
+        client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+        client.goto_degrees(AXIS_AZ, 2.0)  # target = 2 deg
+        assert client.axis_status(AXIS_AZ).running is True
+        clock.sleep(0.5)  # 0.5 s * 1.77 deg/s = 0.885 deg travelled
+        mid = client.position_degrees(AXIS_AZ)
+        assert mid == pytest.approx(0.885, abs=0.02)
+        clock.sleep(0.7)  # total 1.2 s -> 2.124 deg worth: clamped at target
+        end = client.position_degrees(AXIS_AZ)
+        assert end == pytest.approx(2.0, abs=1e-3)
+        assert client.axis_status(AXIS_AZ).running is False
+
+
+def test_track_modes_run_at_fixed_rates() -> None:
+    clock = FakeClock()
+    with _SimFactory(clock) as sim:
+        client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+        client.track_mode(AXIS_AZ, ccw=False, fast=False)  # slow = 2.07 deg/s
+        client.set_step_period(AXIS_AZ, 10)  # ignored by firmware, and by sim
+        client.start(AXIS_AZ)
+        clock.sleep(1.0)
+        assert client.position_degrees(AXIS_AZ) == pytest.approx(2.07, abs=0.02)
+        client.stop(AXIS_AZ)
+        clock.sleep(1.0)
+        assert client.position_degrees(AXIS_AZ) == pytest.approx(2.07, abs=0.02)
+
+
+def test_goto_restart_mid_motion_retargets() -> None:
+    clock = FakeClock()
+    with _SimFactory(clock) as sim:
+        client = SynscanClient(host="127.0.0.1", port=sim.addr[1], timeout=2.0, allow_motion=True)
+        client.goto_degrees(AXIS_AZ, 5.0)
+        clock.sleep(1.0)  # 1.77 deg gone
+        assert client.axis_status(AXIS_AZ).running is True
+        client.goto_degrees(AXIS_AZ, 0.0)  # pulse tracker style: retarget mid-run
+        clock.sleep(5.0)
+        assert client.position_degrees(AXIS_AZ) == pytest.approx(0.0, abs=1e-3)
+        assert client.axis_status(AXIS_AZ).running is False
+
+
+class _SimFactory:
+    """Context manager wrapping MountSim with an explicit clock."""
+
+    def __init__(self, clock: Clock) -> None:
+        self._clock = clock
+        self._sim: MountSim | None = None
+
+    def __enter__(self) -> MountSim:
+        self._sim = MountSim(clock=self._clock)
+        return self._sim
+
+    def __exit__(self, *exc: object) -> None:
+        assert self._sim is not None
+        self._sim.close()

@@ -323,9 +323,10 @@ parallel kommen:
    auf der Kippachse), Alt von Hand prüfen, Kamera-Akku laden.
 2. **Thomas, eine Zeile:** Beobachterkoordinaten (lat/lon, optional Höhe) —
    ohne die bleibt jede Passliste Demo.
-3. **Ich:** Goto-Pulsing-Tracker im Simulator bauen (MountSim mit gemessener
-   Goto-Rate 1,77°/s + Auslauframpe), dann Alt-Feature-Parität, sobald die
-   Achse frei ist.
+3. **Ich:** ~~Goto-Pulsing-Tracker im Simulator bauen~~ **erledigt 28.08.**
+   (`tracking.py` + Sim-Physik, max. Fehler < 0,35° am Synthpass, 210 Tests).
+   Jetzt: Pulsing-Fahrprobe am echten Mount (nur AZ, `--pulse 2`), dann
+   Alt-Feature-Parität, sobald die Achse frei ist.
 
 Danach: erster echter ISS-Pass mit
 `mount satellite --norad 25544 --lat … --lon … --track --allow-motion`.
