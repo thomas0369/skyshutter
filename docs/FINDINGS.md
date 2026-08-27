@@ -117,6 +117,40 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
+### 27.08.2026 (13:30–14:10: AZ-GTi Protokoll entschlüsselt) — UDP 11880, Synscan-Serial-Framing, `!3`=InvalidCharacter
+Aufbau:     Pi per wlan0 mit Mount-AP „SynScan" (offen, Kanal 2, 55/100)
+            verbunden; UDP-Fragen an 192.168.4.1:11880. Kamera-Stream für
+            die Messfenster jeweils geparkt (Service stop), danach zurück.
+Belegt:     - Mount-AP: SSID „SynScan", OFFEN (kein PSK), DHCP vergibt
+              192.168.4.x (Pi wurde .2), Mount = 192.168.4.1, pingbar
+              (RTT 4–210 ms, stark schwankend — WLAN-Chip schläft ein?).
+            - **TCP komplett tot** (Portscan 1–11000: nichts offen; 11880
+              activ refused). Alles läuft über **UDP 11880**.
+            - **Framing: `:CMD<axis><HEX>\r` — nur CR, kein `#`, kein LF.**
+              Nackte Befehle ohne `\r` oder mit `#` enden als `!3` =
+              InvalidCharacter (Fehlerdic. aus pysynscan/synscan/comm.py).
+            - Antworten: `=<HEX>\r` (ok) bzw. `!<n>\r` (Fehler 0=Unknown,
+              1=Length, 2=MotorNotStopped, 3=InvalidChar, 4=NotInit …).
+            - 24-Bit-Werte werden in 2-Zeichen-Gruppen gedreht übertragen
+              („563412" statt „123456").
+            - Gemessen (beide Achsen identisch): Version e=0336C5,
+              Steps/Rev a=0x1FA400 (2.073.088), TimerFreq s=14.400 Hz,
+              Highspeed-Schwelle j-Offset 0x800000, Status f1/f2=0x100/0x101
+              (Achsen stehend), :F3 → `=` (initialisiert).
+            - Befehlskarte (Referenz pysynscan motors.py, Verifikation —
+              skyshutter implementiert eigenständig, stdlib-only):
+              Lesend F3/e/a/s/j(Position−0x800000)/f(Status);
+              Schreibend E(SetPos)/G(MotionMode+2)/I(Speed)/S/H(Target)/
+              M(Break)/J(Start)/K(Stopp sanft)/L(HardStopp)/O(Switch).
+Offen:      - **wlan0-Konflikt:** Ein Interface kann nur EIN Netz — Kamera-AP
+              (192.168.0.x) ODER Mount-AP (192.168.4.x), nie beide. Für
+              Streamen+Guiding gleichzeitig: Mount in Station Mode ins
+              Heimnetz (App → Wi-Fi Setting → Station Mode) ODER zweiter
+              USB-WLAN-Stick am Pi.
+            - Bewegungsbefehle ungetestet (Schreibregel: nur nach OK).
+            - :j1-Position im Detail noch nicht geloggt (erster Test lief,
+              0x800000 = Nullposition).
+
 ### 27.08.2026 (12:35–12:39: Bilanz nach 3,5 h Dauerbetrieb) — Selbstheilung greift autonom; Magenta nicht wiedergekehrt; Watchdog v2 aktiv
 Aufbau:     Watchdog-Log (/tmp/lv_watchdog.log, 30-s-Takt) + Service-Journal
             seit 09:26, /status-Sequenzvergleich t0/t8s.
