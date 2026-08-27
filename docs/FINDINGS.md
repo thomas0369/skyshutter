@@ -117,7 +117,37 @@ oft mehr wert als die Frage.
 
 Neueste zuerst.
 
-### 27.08.2026 (08:06–08:30: Pi Brownout & Wakeup-Recovery)
+### 27.08.2026 (08:45–09:00: API Reste, Zoom Verhalten & BLE Stresstest)
+Aufbau:     Test-Skript in `skyshutter-stream`-Lücke. Zoom (0x9016) mit Parametern getestet. Lese-Ops (0x90CC, 0x9006) getestet. BLE Stresstest (direkt nach Abbruch).
+Belegt:     - **Lese-Ops (0x90CC Picture Control, 0x9006 Profiles):** Werfen BEIDE
+              `OPERATION_NOT_SUPPORTED 0x2005`. Wie bei PTPIP-Info (0x90E0) geht
+              die Kamera danach in den Straf-Zustand und schließt den Port
+              (`Connection refused` für den Rest der Session). Die P1100
+              unterstützt all diese Comfort-Features via PTP/IP nicht.
+            - **Zoom (0x9016) Verhalten:** Der Parameter `steps` ist **kein
+              linearer, relativer Abstand**, sondern erzeugt absolute
+              Positions-Sprünge in einer internen Liste/Kurve.
+              - `zoom(10)` ließ Brennweite von 3500 auf 5300 springen. Noch
+                einmal `zoom(10)` ließ sie ZURÜCK auf 3500 springen!
+              - `zoom(-1)` sprang von 3500 auf 10500.
+              - `zoom(-2, -3, -4, -5)` fuhr iterativ auf 8600, 7300, 5300, 3500.
+              - `zoom(-6)`: `INVALID_PARAMETER 0x201D` (ab hier greift die Grenze).
+            - **BLE-Wakeup-Stress:** Wird der `remote-start.py` (LSS-Client)
+              hart gekillt (SIGTERM) oder bricht bei schwachem WLAN ab,
+              bleibt der GATT-State in BlueZ/Kamera unsauber. Ein sofort
+              folgender Wakeup-Versuch wirft sofort den "Kamera sendet nicht /
+              Unlikely Error". Ein sauberes `systemctl restart bluetooth`
+              heilt das Pi-seitig sofort.
+Folge:      - Das Kamera-Zoom-Verhalten via PTP/IP (0x9016) ist für feinfühlige
+              Steuerung unbrauchbar (große, nicht-lineare Sprünge, 0x941E fehlt).
+              Wir konzentrieren uns für das Tracking auf die Montierung (Mount).
+              - **Nacht-Kollaps-Kette geklärt:** Schwaches WLAN -> Stream reißt
+              -> Systemd killt/restartet Wrapper -> unsauberer BLE Abbruch ->
+              BlueZ verschluckt sich -> Wakeup geht nicht mehr durch -> Pi-
+              Stromversorgung (Brownout) gibt dem System den Rest.
+              Lösung: Stärkere Stromversorgung + `Restart=always` in den
+              Stream-Service einbauen, der VOR dem `remote-start.py` präventiv
+              einmal `systemctl restart bluetooth` macht.
 Aufbau:     Pi stürzte um 08:06 hart ab. Ursachenforschung per ssh nach Reboot.
 Belegt:     - **Ursache Pi-Crash:** Chronische Unterspannung. `vcgencmd get_throttled`
               liefert `0x50000` (Unterspannung + Throttling in der Vergangenheit).
